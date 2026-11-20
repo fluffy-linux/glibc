@@ -19,25 +19,42 @@
 # include <stdint.h>
 #endif
 
+#define SDOT_OR_DOTDOT(s) \
+  ((s)[0] == L_('.') \
+   && ((s)[1] == L_('\0') \
+       || ((s)[1] == L_('.') && (s)[2] == L_('\0'))))
+
+#define PDOT_OR_DOTDOT(s) \
+  ((s)[0] == L_('.') \
+   && ((s)[1] == L_('\0') || (s)[1] == L_('/') \
+       || ((s)[1] == L_('.') \
+           && ((s)[2] == L_('\0') || (s)[2] == L_('/')))))
+
+#define IS_DOTDOT_COMP(s, fl) \
+  (((fl) & FNM_FILE_NAME) ? PDOT_OR_DOTDOT (s) : SDOT_OR_DOTDOT (s))
+
 struct STRUCT
 {
   const CHAR *pattern;
   const CHAR *string;
   bool no_leading_period;
+  bool at_comp_start;
 };
 
 /* Match STRING against the file name pattern PATTERN, returning zero if
    it matches, nonzero if not.  */
 static int FCT (const CHAR *pattern, const CHAR *string,
-                const CHAR *string_end, bool no_leading_period, int flags,
-                struct STRUCT *ends);
+                const CHAR *string_end, bool no_leading_period,
+                bool at_comp_start, int flags, struct STRUCT *ends);
 static int EXT (INT opt, const CHAR *pattern, const CHAR *string,
-                const CHAR *string_end, bool no_leading_period, int flags);
+                const CHAR *string_end, bool no_leading_period,
+                bool at_comp_start, int flags);
 static const CHAR *END (const CHAR *patternp);
 
 static int
 FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
-     bool no_leading_period, int flags, struct STRUCT *ends)
+     bool no_leading_period, bool at_comp_start, int flags,
+     struct STRUCT *ends)
 {
   const CHAR *p = pattern, *n = string;
   UCHAR c;
@@ -54,6 +71,7 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
   while ((c = *p++) != L_('\0'))
     {
       bool new_no_leading_period = false;
+      bool new_at_comp_start = false;
       c = FOLD (c);
 
       switch (c)
@@ -61,7 +79,8 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
         case L_('?'):
           if (__glibc_unlikely (flags & FNM_EXTMATCH) && *p == '(')
             {
-              int res = EXT (c, p, n, string_end, no_leading_period, flags);
+              int res = EXT (c, p, n, string_end, no_leading_period,
+                             at_comp_start, flags);
               if (res != -1)
                 return res;
             }
@@ -71,6 +90,9 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
           else if (*n == L_('/') && (flags & FNM_FILE_NAME))
             return FNM_NOMATCH;
           else if (*n == L_('.') && no_leading_period)
+            return FNM_NOMATCH;
+          else if (__glibc_unlikely (flags & FNM_DOTDOT)
+                   && at_comp_start && IS_DOTDOT_COMP (n, flags))
             return FNM_NOMATCH;
           break;
 
@@ -90,7 +112,8 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
         case L_('*'):
           if (__glibc_unlikely (flags & FNM_EXTMATCH) && *p == '(')
             {
-              int res = EXT (c, p, n, string_end, no_leading_period, flags);
+              int res = EXT (c, p, n, string_end, no_leading_period,
+                             at_comp_start, flags);
               if (res != -1)
                 return res;
             }
@@ -99,10 +122,14 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
               ends->pattern = p - 1;
               ends->string = n;
               ends->no_leading_period = no_leading_period;
+              ends->at_comp_start = at_comp_start;
               return 0;
             }
 
           if (n != string_end && *n == L_('.') && no_leading_period)
+            return FNM_NOMATCH;
+          if (__glibc_unlikely (flags & FNM_DOTDOT)
+              && at_comp_start && n != string_end && IS_DOTDOT_COMP (n, flags))
             return FNM_NOMATCH;
 
           for (c = *p++; c == L_('?') || c == L_('*'); c = *p++)
@@ -133,7 +160,11 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                     /* One character of the string is consumed in matching
                        this ? wildcard, so *??? won't match if there are
                        less than three characters.  */
-                    ++n;
+                    {
+                      ++n;
+                      no_leading_period = false;
+                      at_comp_start = false;
+                    }
                 }
             }
 
@@ -175,11 +206,14 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                       && *p == L_('(')))
                 {
                   int flags2 = ((flags & FNM_FILE_NAME)
-                                ? flags : (flags & ~FNM_PERIOD));
+                                ? flags
+                                : (flags & ~(FNM_PERIOD | FNM_DOTDOT)));
 
-                  for (--p; n < endp; ++n, no_leading_period = false)
-                    if (FCT (p, n, string_end, no_leading_period, flags2,
-                             &end) == 0)
+                  const CHAR *lim = (c == L_('[')) ? endp : endp + 1;
+                  for (--p; n < lim;
+                       ++n, no_leading_period = false, at_comp_start = false)
+                    if (FCT (p, n, string_end, no_leading_period,
+                             at_comp_start, flags2, &end) == 0)
                       goto found;
                 }
               else if (c == L_('/') && (flags & FNM_FILE_NAME))
@@ -187,22 +221,24 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                   while (n < string_end && *n != L_('/'))
                     ++n;
                   if (n < string_end && *n == L_('/')
-                      && (FCT (p, n + 1, string_end, flags & FNM_PERIOD, flags,
-                               NULL) == 0))
+                      && (FCT (p, n + 1, string_end, flags & FNM_PERIOD,
+                               true, flags, NULL) == 0))
                     return 0;
                 }
               else
                 {
                   int flags2 = ((flags & FNM_FILE_NAME)
-                                ? flags : (flags & ~FNM_PERIOD));
+                                ? flags
+                                : (flags & ~(FNM_PERIOD | FNM_DOTDOT)));
 
                   if (c == L_('\\') && !(flags & FNM_NOESCAPE))
                     c = *p;
                   c = FOLD (c);
-                  for (--p; n < endp; ++n, no_leading_period = false)
+                  for (--p; n < endp;
+                       ++n, no_leading_period = false, at_comp_start = false)
                     if (FOLD ((UCHAR) *n) == c
-                        && (FCT (p, n, string_end, no_leading_period, flags2,
-                                 &end) == 0))
+                        && (FCT (p, n, string_end, no_leading_period,
+                                 at_comp_start, flags2, &end) == 0))
                       {
                       found:
                         if (end.pattern == NULL)
@@ -214,6 +250,7 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                       p = end.pattern;
                       n = end.string;
                       no_leading_period = end.no_leading_period;
+                      at_comp_start = end.at_comp_start;
                       continue;
                     }
                 }
@@ -242,6 +279,10 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
 
             if (*n == L_('/') && (flags & FNM_FILE_NAME))
               /* '/' cannot be matched.  */
+              return FNM_NOMATCH;
+
+            if (__glibc_unlikely (flags & FNM_DOTDOT)
+                && at_comp_start && IS_DOTDOT_COMP (n, flags))
               return FNM_NOMATCH;
 
             not = (*p == L_('!') || (posixly_correct < 0 && *p == L_('^')));
@@ -925,19 +966,22 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
         case L_('!'):
           if (__glibc_unlikely (flags & FNM_EXTMATCH) && *p == '(')
             {
-              int res = EXT (c, p, n, string_end, no_leading_period, flags);
+              int res = EXT (c, p, n, string_end, no_leading_period,
+                             at_comp_start, flags);
               if (res != -1)
                 return res;
             }
           goto normal_match;
 
         case L_('/'):
-          if (NO_LEADING_PERIOD (flags))
+          if (flags & FNM_FILE_NAME)
             {
               if (n == string_end || c != (UCHAR) *n)
                 return FNM_NOMATCH;
 
-              new_no_leading_period = true;
+              if (NO_LEADING_PERIOD (flags))
+                new_no_leading_period = true;
+              new_at_comp_start = true;
               break;
             }
           FALLTHROUGH;
@@ -948,6 +992,7 @@ FCT (const CHAR *pattern, const CHAR *string, const CHAR *string_end,
         }
 
       no_leading_period = new_no_leading_period;
+      at_comp_start = new_at_comp_start;
       ++n;
     }
 
@@ -1022,7 +1067,7 @@ END (const CHAR *pattern)
 
 static int
 EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
-     bool no_leading_period, int flags)
+     bool no_leading_period, bool at_comp_start, int flags)
 {
   const CHAR *startp;
   ptrdiff_t level;
@@ -1099,7 +1144,8 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
   switch (opt)
     {
     case L_('*'):
-      if (FCT (p, string, string_end, no_leading_period, flags, NULL) == 0)
+      if (FCT (p, string, string_end, no_leading_period, at_comp_start,
+               flags, NULL) == 0)
         goto success;
       FALLTHROUGH;
     case L_('+'):
@@ -1109,7 +1155,7 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
             /* First match the prefix with the current pattern with the
                current pattern.  */
             if (FCT (*PASTE (PATTERN_PREFIX, _at) (&list, pattern_i), string,
-                     rs, no_leading_period,
+                     rs, no_leading_period, at_comp_start,
                      flags & FNM_FILE_NAME ? flags : flags & ~FNM_PERIOD,
                      NULL) == 0
                 /* This was successful.  Now match the rest with the rest
@@ -1118,16 +1164,20 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                          rs == string
                          ? no_leading_period
                          : rs[-1] == '/' && NO_LEADING_PERIOD (flags),
+                         rs == string
+                         ? at_comp_start
+                         : ((flags & FNM_FILE_NAME) && rs[-1] == L_('/')),
                          flags & FNM_FILE_NAME
-                         ? flags : flags & ~FNM_PERIOD, NULL) == 0
+                         ? flags : (flags & ~(FNM_PERIOD | FNM_DOTDOT)),
+                         NULL) == 0
                     /* This didn't work.  Try the whole pattern.  */
                     || (rs != string
                         && FCT (pattern - 1, rs, string_end,
-                                rs == string
-                                ? no_leading_period
-                                : rs[-1] == '/' && NO_LEADING_PERIOD (flags),
+                                rs[-1] == '/' && NO_LEADING_PERIOD (flags),
+                                (flags & FNM_FILE_NAME) && rs[-1] == L_('/'),
                                 flags & FNM_FILE_NAME
-                                ? flags : flags & ~FNM_PERIOD, NULL) == 0)))
+                                ? flags : (flags & ~(FNM_PERIOD | FNM_DOTDOT)),
+                                NULL) == 0)))
               /* It worked.  Signal success.  */
               goto success;
         }
@@ -1137,7 +1187,8 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
       break;
 
     case L_('?'):
-      if (FCT (p, string, string_end, no_leading_period, flags, NULL) == 0)
+      if (FCT (p, string, string_end, no_leading_period, at_comp_start,
+               flags, NULL) == 0)
         goto success;
       FALLTHROUGH;
     case L_('@'):
@@ -1148,7 +1199,7 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
              pattern list and the rest of the pattern following the
              pattern list.  */
           if (FCT (STRCAT (*PASTE (PATTERN_PREFIX, _at) (&list, pattern_i), p),
-                   string, string_end, no_leading_period,
+                   string, string_end, no_leading_period, at_comp_start,
                    flags & FNM_FILE_NAME ? flags : flags & ~FNM_PERIOD,
                    NULL) == 0)
             /* It worked.  Signal success.  */
@@ -1169,7 +1220,7 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
                runp_i++)
             {
               if (FCT (*PASTE (PATTERN_PREFIX, _at) (&list, runp_i), string, rs,
-                       no_leading_period,
+                       no_leading_period, at_comp_start,
                        flags & FNM_FILE_NAME ? flags : flags & ~FNM_PERIOD,
                        NULL) == 0)
               break;
@@ -1177,11 +1228,21 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
 
           /* If none of the patterns matched see whether the rest does.  */
           if (runp_i == PASTE (PATTERN_PREFIX, _size) (&list)
+              && !(no_leading_period && string != string_end
+                   && string[0] == L_('.'))
+              && !(__glibc_unlikely (flags & FNM_DOTDOT)
+                   && at_comp_start
+                   && string != string_end
+                   && IS_DOTDOT_COMP (string, flags))
               && (FCT (p, rs, string_end,
                        rs == string
                        ? no_leading_period
                        : rs[-1] == '/' && NO_LEADING_PERIOD (flags),
-                       flags & FNM_FILE_NAME ? flags : flags & ~FNM_PERIOD,
+                       rs == string
+                       ? at_comp_start
+                       : ((flags & FNM_FILE_NAME) && rs[-1] == L_('/')),
+                       flags & FNM_FILE_NAME
+                       ? flags : (flags & ~(FNM_PERIOD | FNM_DOTDOT)),
                        NULL) == 0))
             /* This is successful.  */
             goto success;
@@ -1225,3 +1286,6 @@ EXT (INT opt, const CHAR *pattern, const CHAR *string, const CHAR *string_end,
 #undef BTOWC
 #undef WIDE_CHAR_VERSION
 #undef FINDIDX
+#undef SDOT_OR_DOTDOT
+#undef PDOT_OR_DOTDOT
+#undef IS_DOTDOT_COMP

@@ -38,6 +38,7 @@ extern "C" {
 # define FNM_LEADING_DIR (1 << 3)	/* Ignore `/...' after a match.  */
 # define FNM_CASEFOLD	 (1 << 4)	/* Compare without regard to case.  */
 # define FNM_EXTMATCH	 (1 << 5)	/* Use ksh-like extended matching. */
+# define FNM_DOTDOT	 (1 << 30)	/* Leading `.' or `..' matched only explicitly.  */
 #endif
 
 /* Value returned by `fnmatch' if STRING does not match PATTERN.  */

@@ -270,7 +270,7 @@ fnmatch (const char *pattern, const char *string, int flags)
           if (r == 0)
             r = internal_fnwmatch (wpattern.data, wstring.data,
                                    (wchar_t *) wstring.data + n,
-                                   flags & FNM_PERIOD, flags, NULL);
+                                   flags & FNM_PERIOD, true, flags, NULL);
         }
 
       scratch_buffer_free (&wstring);
@@ -281,7 +281,7 @@ fnmatch (const char *pattern, const char *string, int flags)
     }
 
   return internal_fnmatch (pattern, string, string + strlen (string),
-                           flags & FNM_PERIOD, flags, NULL);
+                           flags & FNM_PERIOD, true, flags, NULL);
 }
 
 #undef fnmatch
