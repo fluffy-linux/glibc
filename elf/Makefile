@@ -210,7 +210,8 @@ install-bin	= sprof
 others-static   = sln
 install-rootsbin = sln
 sln-modules	:= static-stubs
-extra-objs	+= $(sln-modules:=.o)
+extra-objs	+= $(sln-modules:=.o) xmalloc.o
+others-extras	+= xmalloc
 
 ifeq (yes,$(use-ldconfig))
 ifeq (yes,$(build-shared))
@@ -230,7 +231,7 @@ ldconfig-modules := \
   xstrdup \
   # ldconfig-modules
 extra-objs	+= $(ldconfig-modules:=.o)
-others-extras   = $(ldconfig-modules)
+others-extras   += $(ldconfig-modules)
 endif
 endif
 
@@ -498,7 +499,6 @@ tests += \
   tst-rtld-no-malloc \
   tst-rtld-no-malloc-audit \
   tst-rtld-no-malloc-preload \
-  tst-rtld-run-static \
   tst-single_threaded \
   tst-single_threaded-pthread \
   tst-sonamemove-dlopen \
@@ -542,6 +542,12 @@ tests += \
   unload8 \
   valgrind-test \
   # tests
+
+ifeq (yes,$(use-ldconfig))
+tests += \
+  tst-rtld-run-static \
+  # tests
+endif
 tests-cxx = \
   tst-nodelete \
   tst-unique3 \
@@ -725,11 +731,15 @@ tests += $(tests-execstack-$(have-z-execstack))
 tests-static+= $(tests-execstack-static-$(have-z-execstack))
 tests-special += $(tests-execstack-special-$(have-z-execstack))
 ifeq ($(run-built-tests),yes)
+ifeq (yes,$(use-ldconfig))
 tests-special += \
   $(objpfx)tst-ldconfig-X.out \
   $(objpfx)tst-ldconfig-install.out \
   $(objpfx)tst-ldconfig-p.out \
   $(objpfx)tst-ldconfig-soname.out \
+  # tests-special
+endif
+tests-special += \
   $(objpfx)tst-rtld-help.out \
   # tests-special
 ifeq (yes,$(build-shared))

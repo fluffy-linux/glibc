@@ -134,7 +134,7 @@ fi
 
 
 # One Linux we use ldconfig.
-use_ldconfig=yes
+use_ldconfig=no
 
 if test $host = $build; then
   # If $prefix/include/{net,scsi} are symlinks, make install will
