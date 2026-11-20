@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Testing the mtrace function.
 # Copyright (C) 2000-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

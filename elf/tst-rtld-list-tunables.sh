@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test for --list-tunables option ld.so.
 # Copyright (C) 2021-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

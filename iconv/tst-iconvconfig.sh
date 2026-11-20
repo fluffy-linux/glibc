@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Check if iconvconfig correctly handle config links (BZ 32339)
 # Copyright (C) 2025-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

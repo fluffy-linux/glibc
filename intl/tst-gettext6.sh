@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test that gettext() in multithreaded applications works correctly.
 # Copyright (C) 2008-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

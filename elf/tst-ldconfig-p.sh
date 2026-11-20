@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test that ldconfig -p prints something useful.
 # Copyright (C) 2023-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

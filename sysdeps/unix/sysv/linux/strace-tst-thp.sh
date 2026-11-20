@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Run THP test under strace to verify control of the THP segment load.
 # Copyright (C) 2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

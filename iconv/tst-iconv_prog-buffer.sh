@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Test for iconv (the program) buffer management.
 # Copyright (C) 2024-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

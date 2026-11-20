@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 
 # Usage: make-syscalls.sh ../sysdeps/unix/common
 # Expects $sysdirs in environment.

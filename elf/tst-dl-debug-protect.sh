@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # A script to run tests with LD_DEBUG=security and check
 # that output contains expected pattern.
 # Copyright (C) 2026 Free Software Foundation, Inc.

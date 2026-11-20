@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test if library search path does not terminates with non-directory
 # components.
 # Copyright (C) 2023-2026 Free Software Foundation, Inc.

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Consistency checks for the system call list
 # Copyright (C) 2017-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

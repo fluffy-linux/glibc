@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test for the behaviour of 'is_binary128' in printf_size.
 # Copyright (C) 2018-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

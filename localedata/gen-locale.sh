@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Generate test locale files.
 # Copyright (C) 2000-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

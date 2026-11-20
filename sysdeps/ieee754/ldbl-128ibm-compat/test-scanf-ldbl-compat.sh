@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Testing of *scanf.  IEEE binary128 for powerpc64le version.
 # Copyright (C) 2019-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

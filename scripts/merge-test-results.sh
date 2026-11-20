@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Merge test results of individual tests or subdirectories.
 # Copyright (C) 2014-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

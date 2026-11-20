@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # A tls test.
 # Copyright (C) 2003-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

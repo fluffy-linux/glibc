@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Update abilist files based on differences on one architecture.
 # Copyright (C) 2015-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

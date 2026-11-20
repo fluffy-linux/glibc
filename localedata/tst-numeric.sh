@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Testing the implementation of LC_NUMERIC and snprintf(3).
 # Copyright (C) 1996-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

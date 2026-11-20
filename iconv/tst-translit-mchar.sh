@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Testing of multi-character transliterations
 # Copyright (C) 2024-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

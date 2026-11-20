@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Test for glob(3).
 # Copyright (C) 1997-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

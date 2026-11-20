@@ -1,4 +1,4 @@
-#!/bin/sh -f
+#!/sw/bash/bin/bash -f
 # Run available iconv(1) tests.
 # Copyright (C) 1998-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

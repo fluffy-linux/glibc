@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test failure recording (with and without --direct).
 # Copyright (C) 2016-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

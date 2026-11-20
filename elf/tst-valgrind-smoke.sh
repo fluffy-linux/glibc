@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Valgrind smoke test.
 # Copyright (C) 2022-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

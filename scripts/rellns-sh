@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # rellns-sh - Simplified ln program to generate relative symbolic link.
 # Copyright (C) 1996-2026 Free Software Foundation, Inc.
 #

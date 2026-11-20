@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test that ldconfig creates symlinks according to the library's soname
 # (and in particular, does not create symlinks for libraries without a soname)
 # Copyright (C) 2000-2026 Free Software Foundation, Inc.

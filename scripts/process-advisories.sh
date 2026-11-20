@@ -1,4 +1,4 @@
-#!/bin/bash -e
+#!/sw/bash/bin/bash -e
 # Copyright The GNU Toolchain Authors.
 # This file is part of the GNU C Library.
 #

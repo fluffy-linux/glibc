@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Testing of long long int printf conversions.
 # Copyright (C) 2024-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

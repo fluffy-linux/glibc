@@ -1,4 +1,4 @@
-#!/bin/sh -f
+#!/sw/bash/bin/bash -f
 #
 # Copyright (C) 1998-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library and contains tests for

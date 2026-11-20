@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Create a patch which backports the support/ subdirectory.
 # Copyright (C) 2017-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

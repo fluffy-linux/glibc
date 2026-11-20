@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Check that running ld.so with a non-existing file prints an error.
 # Copyright (C) 2024-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

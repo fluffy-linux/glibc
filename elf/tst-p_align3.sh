@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Check invalid p_align of PT_LOAD segments in a shared library.
 # Copyright (C) 2022-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

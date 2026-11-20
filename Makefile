@@ -137,7 +137,7 @@ endif # $(build-shared)
 
 # Used to build testrun.sh.
 define testrun-script
-#!/bin/bash
+#!/sw/bash/bin/bash
 builddir=`dirname "$$0"`
 GCONV_PATH="$${builddir}/iconvdata"
 
@@ -211,7 +211,7 @@ $(common-objpfx)testrun.sh: $(common-objpfx)config.make \
 postclean-generated += testrun.sh
 
 define debugglibc
-#!/bin/bash
+#!/sw/bash/bin/bash
 
 SOURCE_DIR="$(CURDIR)"
 BUILD_DIR="$(common-objpfx)"

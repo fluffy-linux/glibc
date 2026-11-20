@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 bindir=$1
 
 VERSION=1.0

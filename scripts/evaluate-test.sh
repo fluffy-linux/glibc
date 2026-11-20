@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Output a test status line.
 # Copyright (C) 2012-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

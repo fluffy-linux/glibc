@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Test fwrite for bug 29459.
 # Copyright (C) 2025-2026 Free Software Foundation, Inc.
 # This file is part of the GNU C Library.

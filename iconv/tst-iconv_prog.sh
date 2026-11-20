@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/sw/bash/bin/bash
 # Test for some known iconv(1) hangs from bug 19519, and miscellaneous
 # iconv(1) program error conditions.
 # Copyright (C) 2020-2026 Free Software Foundation, Inc.

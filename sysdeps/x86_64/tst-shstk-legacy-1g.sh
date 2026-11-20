@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Check that legacy shadow stack code in init_array will trigger
 # segfault.
 # Copyright (C) 2023-2026 Free Software Foundation, Inc.

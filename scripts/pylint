@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/sw/bash/bin/bash
 # Simple wrapper around the pylint program that uses the pylintrc file to
 # validate the source code in files passed on command line.
 
