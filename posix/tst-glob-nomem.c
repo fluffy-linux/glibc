@@ -29,12 +29,14 @@
    globfree must then free what is left exactly once.  */
 
 #include <array_length.h>
+#include <dirent.h>
 #include <errno.h>
 #include <glob.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <support/check.h>
 #include <support/namespace.h>
 #include <support/support.h>
@@ -128,9 +130,41 @@ static const struct test_case cases[] =
     { "d1/\\a.txt", 0 },
     { "*", GLOB_PERIOD },
     { "zz*", GLOB_NOCHECK },
+    /* Fluffy's flags (GLOB.md 3.1).  */
+    { "d*/**/*.txt", GLOB_GLOBSTAR },
+    { "**", GLOB_GLOBSTAR | GLOB_MARK },
+    { "d1/**/", GLOB_GLOBSTAR },
+    { "f1/**", GLOB_GLOBSTAR },
+    { "+(d1|d2)/*.@(txt|c)", GLOB_EXTMATCH },
+    { "d1/@([!b]*.txt|*.c)", GLOB_EXTMATCH },
+    { "d1//", GLOB_KEEP_SLASHES },
+    { "d*//", GLOB_KEEP_SLASHES },
+    { "d1/", GLOB_KEEP_SLASHES | GLOB_MARK },
+    { "D1/A.TXT", GLOB_CASEFOLD },
+    { "d?/*.TXT", GLOB_CASEFOLD },
+    { ".*", GLOB_SKIPDOTS | GLOB_PERIOD },
+    { "*", GLOB_DOTDOT | GLOB_PERIOD },
+    { "d1//", GLOB_KEEP_SLASHES | GLOB_APPEND, "d2/*" },
+    { "d*/**/*.txt", GLOB_GLOBSTAR | GLOB_APPEND | GLOB_DOOFFS, "d1/*" },
+    /* The directory scan of "**" through GLOB_ALTDIRFUNC hooks.  */
+    { "d*/**/*.txt", GLOB_GLOBSTAR | GLOB_ALTDIRFUNC },
+    /* Matches that already end in a slash keep it.  */
+    { "d*/", GLOB_KEEP_SLASHES | GLOB_MARK },
+    /* A literal name too long for alloca, unescaped into malloc'd
+       memory (LONG_PATTERN, filled in by do_test).  */
+    { NULL, 0 },
   };
 
 static const struct test_case *current;
+
+/* "d1/" and then a backslash before each of 40000 'x's.  */
+static char long_pattern[3 + 2 * 40000 + 1];
+
+static const char *
+pattern_of (const struct test_case *c)
+{
+  return c->pattern != NULL ? c->pattern : long_pattern;
+}
 
 /* Join PGLOB's matches (after its offsets) into BUF, one per line.  */
 static void
@@ -163,9 +197,17 @@ run_glob (glob_t *pglob)
   if (flags & GLOB_APPEND)
     TEST_COMPARE (glob (current->first, flags & ~GLOB_APPEND, NULL, pglob),
                   0);
+  if (flags & GLOB_ALTDIRFUNC)
+    {
+      pglob->gl_opendir = (void *(*) (const char *)) opendir;
+      pglob->gl_readdir = (struct dirent *(*) (void *)) readdir;
+      pglob->gl_closedir = (void (*) (void *)) closedir;
+      pglob->gl_lstat = lstat;
+      pglob->gl_stat = stat;
+    }
   shared->allocation_count = 0;
   shared->counting = true;
-  int ret = glob (current->pattern, flags, NULL, pglob);
+  int ret = glob (pattern_of (current), flags, NULL, pglob);
   shared->counting = false;
   return ret;
 }
@@ -251,7 +293,7 @@ run_failing (void *closure)
            *p != '\0'; p = strchr (p, '\n') + 1)
         if (!among (p, strchr (p, '\n') - p, shared->expected))
           FAIL ("pattern \"%s\", flags %#x, allocation %u failing:"
-                " match \"%.*s\" not among\n%s", current->pattern,
+                " match \"%.*s\" not among\n%s", pattern_of (current),
                 current->flags, shared->failing_allocation,
                 (int) (strchr (p, '\n') - p), p, shared->expected);
     }
@@ -260,7 +302,7 @@ run_failing (void *closure)
     {
       if (!is_subsequence (got, shared->expected))
         FAIL ("pattern \"%s\", flags %#x, allocation %u failing:"
-              " matches\n%snot among\n%s", current->pattern,
+              " matches\n%snot among\n%s", pattern_of (current),
               current->flags, shared->failing_allocation, got,
               shared->expected);
     }
@@ -293,6 +335,10 @@ do_test (void)
       add_temp_file (xasprintf ("%s/%s", dir, files[i]));
     }
 
+  memcpy (long_pattern, "d1/", 3);
+  for (size_t i = 0; i < 40000; ++i)
+    memcpy (long_pattern + 3 + 2 * i, "\\x", 2);
+
   shared = support_shared_allocate (sizeof (*shared));
   for (size_t c = 0; c < array_length (cases); ++c)
     {
@@ -300,8 +346,8 @@ do_test (void)
       shared->failing_allocation = ~0U;
       support_isolate_in_subprocess (record_expected, NULL);
       unsigned int total = shared->allocation_count;
-      printf ("info: \"%s\" (flags %#x): %u allocations, result %d\n",
-              current->pattern, current->flags, total,
+      printf ("info: \"%.40s\" (flags %#x): %u allocations, result %d\n",
+              pattern_of (current), current->flags, total,
               shared->expected_ret);
       for (unsigned int n = 0; n < total; ++n)
         {

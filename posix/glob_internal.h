@@ -28,7 +28,7 @@ enum
 };
 
 static inline int
-__glob_pattern_type (const char *pattern, int quote)
+__glob_pattern_type_ext (const char *pattern, int quote, int extmatch)
 {
   const char *p;
   int ret = GLOBPAT_NONE;
@@ -39,6 +39,13 @@ __glob_pattern_type (const char *pattern, int quote)
       case '?':
       case '*':
         return GLOBPAT_SPECIAL;
+
+      case '+':
+      case '@':
+      case '!':
+        if (extmatch && p[1] == '(')
+          return GLOBPAT_SPECIAL;
+        break;
 
       case '\\':
         if (quote)
@@ -60,6 +67,12 @@ __glob_pattern_type (const char *pattern, int quote)
       }
 
   return ret;
+}
+
+static inline int
+__glob_pattern_type (const char *pattern, int quote)
+{
+  return __glob_pattern_type_ext (pattern, quote, 0);
 }
 
 #endif /* GLOB_INTERNAL_H  */

@@ -502,9 +502,46 @@ do_test (void)
 
   test ("file1lev1/", 0, GLOB_NOMATCH, NULL);
 
+  test ("dir1lev1//", 0, 0, "dir1lev1/");
+
+  test ("dir1lev1//", GLOB_KEEP_SLASHES, 0, "dir1lev1//");
+
+  test ("dir*lev1//", GLOB_KEEP_SLASHES, 0,
+	"dir1lev1/",
+	"dir2lev1/");
+
+  test ("dir1lev1/dir@(1|3)lev2/*", GLOB_EXTMATCH, 0,
+	"dir1lev1/dir3lev2/file3lev3",
+	"dir1lev1/dir3lev2/file4lev3");
+
+  test ("DIR1LEV1/DIR2LEV2/FILE*LEV3", GLOB_CASEFOLD, 0,
+	"dir1lev1/dir2lev2/file1lev3",
+	"dir1lev1/dir2lev2/file2lev3");
+
+  test ("dir2lev1/dir1lev2/.*", GLOB_SKIPDOTS, 0,
+	"dir2lev1/dir1lev2/.dir",
+	"dir2lev1/dir1lev2/.foo");
+
+  test ("dir2lev1/dir1lev2/*", GLOB_PERIOD | GLOB_DOTDOT, 0,
+	"dir2lev1/dir1lev2/.dir",
+	"dir2lev1/dir1lev2/.foo");
+
+  test ("dir2lev1/dir1lev2/!(*.bar)",
+	GLOB_EXTMATCH | GLOB_DOTDOT, GLOB_NOMATCH, NULL);
+
+  test ("dir2lev1/dir1lev2/!(*.bar)",
+	GLOB_EXTMATCH | GLOB_PERIOD | GLOB_DOTDOT, 0,
+	"dir2lev1/dir1lev2/.dir",
+	"dir2lev1/dir1lev2/.foo");
+
+  test ("**/file1lev4", GLOB_GLOBSTAR, 0,
+	"dir1lev1/dir2lev2/dir1lev3/file1lev4");
+
   GLOBFREE_FUNC (&gl);
 
   return result;
 }
+
+
 
 #include <support/test-driver.c>
