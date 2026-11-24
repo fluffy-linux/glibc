@@ -33,6 +33,7 @@
 #include <fpu_control.h>
 #include <sys/mman.h>
 #include <link.h>
+#include <fswc-index.h>
 #include <dl-lookupcfg.h>
 #include <dl-sysdep.h>
 #include <dl-fixup-attribute.h>
@@ -207,6 +208,10 @@ struct r_search_path_elem
     const char *dirname;
     size_t dirnamelen;
 
+    /* DIRNAME has a component that is exactly "*": it names every
+       package of a prefix (Fluffy search lists, GLOB.md 3.2).  */
+    bool is_pkg_wildcard;
+
     enum r_dir_status status[0];
   };
 
@@ -368,6 +373,10 @@ struct rtld_global
      the loaded object might as well require a call to this function.
      At this time it is not anymore a problem to modify the tables.  */
   __rtld_lock_define_recursive (EXTERN, _dl_load_lock)
+
+  /* FSWC prefixes and mapped indexes, shared by ld.so and libc so that an
+     index ld.so mapped for library search also serves glob and execvp.  */
+  EXTERN struct fswc_shared _dl_fswc;
   /* This lock is used to keep __dl_iterate_phdr from inspecting the
      list of loaded objects while an object is added to or removed
      from that list.  */

@@ -96,6 +96,12 @@
 #include <flexmember.h>
 #include <glob_internal.h>
 #include <scratch_buffer.h>
+#if defined _LIBC && defined __linux__
+# include <fswc-index.h>
+# define GLOB_FSWC 1
+#else
+# define GLOB_FSWC 0
+#endif
 
 static const char *next_brace_sub (const char *begin, int flags) __THROWNL;
 
@@ -202,6 +208,39 @@ convert_dirent64 (const struct dirent64 *source)
     ((void) (buf), (void) (len), (void) (newlen), (void) (avar), (void *) 0)
 #endif
 
+#if GLOB_FSWC
+/* The FSWC state of the glob call running in this thread: which prefix
+   was validated, and the index if it is valid.  Each prefix is validated
+   at most once per glob call.  */
+static __thread struct fswc_call *glob_fswc_call;
+#endif
+
+/* fstatat (AT_FDCWD, NAME, ST, ATFLAGS) when the caller gave no
+   GLOB_ALTDIRFUNC hooks.  Where FSWC can prove what NAME is, the answer
+   comes from its index; otherwise from the kernel.  Callers only use the
+   result and the file type.  */
+static int
+glob_fstatat (const char *name, struct_stat64 *st, int atflags)
+{
+#if GLOB_FSWC
+  struct fswc_call local = { 0 };
+  struct fswc_call *call = glob_fswc_call != NULL ? glob_fswc_call : &local;
+  int t = __fswc_answer (call, name, !(atflags & AT_SYMLINK_NOFOLLOW));
+  if (t == FSWC_ABSENT)
+    {
+      __set_errno (ENOENT);
+      return -1;
+    }
+  if (t > 0)
+    {
+      memset (st, 0, sizeof (*st));
+      st->st_mode = DTTOIF (t);
+      return 0;
+    }
+#endif
+  return GLOB_FSTATAT64 (AT_FDCWD, name, st, atflags);
+}
+
 static int
 glob_lstat (glob_t *pglob, int flags, const char *fullname)
 {
@@ -214,8 +253,7 @@ glob_lstat (glob_t *pglob, int flags, const char *fullname)
   } ust;
   return (__glibc_unlikely (flags & GLOB_ALTDIRFUNC)
           ? pglob->GLOB_LSTAT (fullname, &ust.st)
-          : GLOB_FSTATAT64 (AT_FDCWD, fullname, &ust.st64,
-                            AT_SYMLINK_NOFOLLOW));
+          : glob_fstatat (fullname, &ust.st64, AT_SYMLINK_NOFOLLOW));
 }
 
 /* Set *R = A + B.  Return true if the answer is mathematically
@@ -257,7 +295,7 @@ is_dir (char const *filename, int flags, glob_t const *pglob)
   struct_stat64 st64;
   return (__glibc_unlikely (flags & GLOB_ALTDIRFUNC)
           ? pglob->gl_stat (filename, &st) == 0 && S_ISDIR (st.st_mode)
-          : (GLOB_FSTATAT64 (AT_FDCWD, filename, &st64, 0) == 0
+          : (glob_fstatat (filename, &st64, 0) == 0
              && S_ISDIR (st64.st_mode)));
 }
 
@@ -484,8 +522,8 @@ glob_testdir (const char *dir, int flags, const glob_t *pglob, bool check_symlin
     }
   else
     {
-      int r = GLOB_FSTATAT64 (AT_FDCWD, dir, &st64,
-                              check_symlink ? AT_SYMLINK_NOFOLLOW : 0);
+      int r = glob_fstatat (dir, &st64,
+                            check_symlink ? AT_SYMLINK_NOFOLLOW : 0);
       if (r < 0)
         return -1;
       if (check_symlink && S_ISLNK (st64.st_mode))
@@ -666,6 +704,207 @@ globstar_scan (const char *sdir, int flags, int gs_flags,
 # define GLOB_ATTRIBUTE
 #endif
 
+static int
+GLOB_ATTRIBUTE
+glob_body_inner (const char *pattern, int flags,
+                 int (*errfunc) (const char *, int),
+                 glob_t *pglob);
+
+
+#if GLOB_FSWC
+/* GLOB_PATHS: PATTERN is a search list (GLOB.md 3.2), expanded by the
+   walker that execvp and ld.so use, so all three agree by construction.
+   Elements are separated by every ':'; an empty element is "."; a whole
+   "*" component (at most one per element) is the only wildcard; matches
+   are in byte order within an element.  "{LIST}/NAME" appends a literal
+   NAME to every element, LIST ending at the last "}/".  */
+
+struct search_list
+{
+  glob_t *pglob;
+  int flags;
+  size_t matches;               /* In the current element.  */
+  int error;
+};
+
+static int
+search_list_add (glob_t *pglob, const char *path, bool slash)
+{
+  size_t n = pglob->gl_offs + pglob->gl_pathc;
+  char **v = realloc (pglob->gl_pathv, (n + 2) * sizeof (char *));
+  if (v == NULL)
+    return GLOB_NOSPACE;
+  pglob->gl_pathv = v;
+  size_t len = strlen (path);
+  char *copy = malloc (len + slash + 1);
+  if (copy == NULL)
+    return GLOB_NOSPACE;
+  memcpy (copy, path, len);
+  if (slash)
+    copy[len++] = '/';
+  copy[len] = '\0';
+  v[n] = copy;
+  v[n + 1] = NULL;
+  ++pglob->gl_pathc;
+  return 0;
+}
+
+/* The file type of PATH as lstat (FOLLOW false) or stat sees it, through
+   the caller's hooks if it gave any; -1 if it does not exist.  */
+static int
+search_list_type (const struct search_list *sl, const char *path,
+                  bool follow)
+{
+  if (sl->flags & GLOB_ALTDIRFUNC)
+    {
+      struct_stat st;
+      int r = follow ? sl->pglob->gl_stat (path, &st)
+                     : sl->pglob->GLOB_LSTAT (path, &st);
+      return r == 0 ? IFTODT (st.st_mode) : -1;
+    }
+  struct_stat64 st;
+  return glob_fstatat (path, &st, follow ? 0 : AT_SYMLINK_NOFOLLOW) == 0
+         ? IFTODT (st.st_mode) : -1;
+}
+
+static void *
+search_list_open (const char *dir, void *closure)
+{
+  glob_t *pglob = closure;
+  return pglob->gl_opendir (dir);
+}
+
+static const char *
+search_list_next (void *stream, void *closure)
+{
+  glob_t *pglob = closure;
+  struct readdir_result d = convert_dirent (GL_READDIR (pglob, stream));
+  return d.name;
+}
+
+static void
+search_list_close (void *stream, void *closure)
+{
+  glob_t *pglob = closure;
+  pglob->gl_closedir (stream);
+}
+
+static bool
+search_list_candidate (const struct fswc_candidate *c, void *closure)
+{
+  struct search_list *sl = closure;
+  const char *path = c->path;
+  int hint = c->hint;
+  if (hint == FSWC_ABSENT || hint == FSWC_TOOLONG)
+    return true;
+  if (hint < 0)
+    {
+      /* Only the kernel (or the caller's hooks) knows.  */
+      hint = search_list_type (sl, path, false);
+      if (hint < 0)
+        return true;
+    }
+  bool is_dir = hint == DT_DIR;
+  if (hint == DT_LNK && (sl->flags & (GLOB_ONLYDIR | GLOB_MARK)))
+    is_dir = search_list_type (sl, path, true) == DT_DIR;
+  if ((sl->flags & GLOB_ONLYDIR) && !is_dir)
+    return true;
+  sl->error = search_list_add (sl->pglob, path,
+                               is_dir && (sl->flags & GLOB_MARK));
+  ++sl->matches;
+  return sl->error == 0;
+}
+
+static int
+glob_search_list (const char *pattern, int flags, glob_t *pglob)
+{
+  const char *list = pattern;
+  size_t list_len = strlen (pattern);
+  const char *name = "";
+  if (pattern[0] == '{')
+    {
+      /* A command name cannot contain '/', so the last "}/" ends LIST.  */
+      for (const char *c = pattern + list_len; c-- > pattern + 1; )
+        if (c[0] == '}' && c[1] == '/')
+          {
+            list = pattern + 1;
+            list_len = c - list;
+            name = c + 2;
+            break;
+          }
+    }
+
+  enum { PATH_CAP = 4096, SCRATCH_CAP = 64 * 1024 };
+  char *mem = malloc (PATH_CAP + SCRATCH_CAP + 8);
+  if (mem == NULL)
+    return GLOB_NOSPACE;
+  char *scratch = (char *) (((uintptr_t) mem + 7) & ~(uintptr_t) 7);
+  char *path = scratch + SCRATCH_CAP;
+
+  /* Caller hooks list the directories and bypass FSWC.  */
+  struct fswc_lister lister =
+    { search_list_open, search_list_next, search_list_close, pglob };
+  struct fswc_call hooked = { .lister = &lister };
+  struct fswc_call local = { 0 };
+  struct fswc_call *call = (flags & GLOB_ALTDIRFUNC) ? &hooked
+                           : glob_fswc_call != NULL ? glob_fswc_call : &local;
+  struct search_list sl = { pglob, flags, 0, 0 };
+  size_t before = pglob->gl_pathc;
+  bool magic = false;
+  const char *end = list + list_len;
+  for (const char *e = list; ; )
+    {
+      const char *colon = memchr (e, ':', end - e);
+      if (colon == NULL)
+        colon = end;
+      sl.matches = 0;
+      bool star = __fswc_has_star (e, colon - e);
+      magic |= star;
+      int r = __fswc_walk (call, e, colon - e, name, path, PATH_CAP, scratch,
+                           SCRATCH_CAP, search_list_candidate, &sl);
+      /* With no match, GLOB_NOCHECK keeps the element itself, and
+         GLOB_NOMAGIC does so for an element without a "*".  */
+      if (sl.error == 0 && sl.matches == 0
+          && ((flags & GLOB_NOCHECK) || ((flags & GLOB_NOMAGIC) && !star)))
+        {
+          /* The element itself ("." if empty), with NAME.  */
+          size_t elen = colon > e ? (size_t) (colon - e) : 1;
+          size_t nlen = strlen (name);
+          if (elen + 1 + nlen >= PATH_CAP)
+            sl.error = GLOB_NOSPACE;
+          else
+            {
+              char *q = mempcpy (path, colon > e ? e : ".", elen);
+              if (nlen > 0)
+                {
+                  *q++ = '/';
+                  q = mempcpy (q, name, nlen);
+                }
+              *q = '\0';
+              sl.error = search_list_add (pglob, path, false);
+            }
+        }
+      (void) r;
+      if (sl.error != 0 || colon == end)
+        break;
+      e = colon + 1;
+    }
+  free (mem);
+
+  if (sl.error != 0)
+    {
+      if (!(flags & GLOB_APPEND))
+        {
+          globfree (pglob);
+          pglob->gl_pathc = 0;
+        }
+      return sl.error;
+    }
+  pglob->gl_flags = (flags & ~GLOB_PATHS) | (magic ? GLOB_MAGCHAR : 0);
+  return pglob->gl_pathc != before ? 0 : GLOB_NOMATCH;
+}
+#endif
+
 /* Do glob searching for PATTERN, placing results in PGLOB.
    The bits defined above may be set in FLAGS.
    If a directory cannot be opened or read and ERRFUNC is not nil,
@@ -674,10 +913,11 @@ globstar_scan (const char *sdir, int flags, int gs_flags,
    'glob' returns GLOB_ABORTED; if it returns zero, the error is ignored.
    If memory cannot be allocated for PGLOB, GLOB_NOSPACE is returned.
    Otherwise, 'glob' returns zero.  */
-int
+static int
 GLOB_ATTRIBUTE
-__glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
-        glob_t *pglob)
+glob_body_inner (const char *pattern, int flags,
+                 int (*errfunc) (const char *, int),
+                 glob_t *pglob)
 {
   const char *filename;
   char *dirname = NULL;
@@ -697,11 +937,6 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
       __set_errno (EINVAL);
       return -1;
     }
-
-  /* POSIX requires all slashes to be matched.  This means that with
-     a trailing slash we must match only directories.  */
-  if (pattern[0] && pattern[strlen (pattern) - 1] == '/')
-    flags |= GLOB_ONLYDIR;
 
   if (!(flags & GLOB_DOOFFS))
     /* Have to do this so 'globfree' knows where to start freeing.  It
@@ -729,6 +964,16 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
             pglob->gl_pathv[i] = NULL;
         }
     }
+
+#if GLOB_FSWC
+  if (flags & GLOB_PATHS)
+    return glob_search_list (pattern, flags, pglob);
+#endif
+
+  /* POSIX requires all slashes to be matched.  This means that with
+     a trailing slash we must match only directories.  */
+  if (pattern[0] && pattern[strlen (pattern) - 1] == '/')
+    flags |= GLOB_ONLYDIR;
 
   if (flags & GLOB_BRACE)
     {
@@ -822,10 +1067,10 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
               /* Construct the new glob expression.  */
               mempcpy (mempcpy (alt_start, p, next - p), rest, rest_len);
 
-              result = __glob (onealt,
-                               ((flags & ~(GLOB_NOCHECK | GLOB_NOMAGIC))
-                                | GLOB_APPEND),
-                               errfunc, pglob);
+              result = glob_body_inner (onealt,
+                                        ((flags & ~(GLOB_NOCHECK | GLOB_NOMAGIC))
+                                         | GLOB_APPEND),
+                                        errfunc, pglob);
 
               /* If we got an error, return it.  */
               if (result && result != GLOB_NOMATCH)
@@ -861,6 +1106,7 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
     }
 
  no_brace:
+  flags &= ~GLOB_PATHS;
   oldcount = pglob->gl_pathc + pglob->gl_offs;
 
   /* Find the filename.  */
@@ -990,7 +1236,7 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
           for (char *p = &dirname[dirlen - 1];
                p > dirname && p[0] == '/'; --p)
             p[0] = '\0';
-          int val = __glob (dirname, flags | GLOB_MARK, errfunc, pglob);
+          int val = glob_body_inner (dirname, flags | GLOB_MARK, errfunc, pglob);
           if (val == 0)
             {
               if ((flags & GLOB_KEEP_SLASHES)
@@ -1603,17 +1849,17 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
               base_pat = d;
             }
 
-          status = __glob (base_pat,
-                           ((flags & (GLOB_ERR | GLOB_NOESCAPE
-                                      | GLOB_ALTDIRFUNC
-                                      | GLOB_EXTMATCH | GLOB_CASEFOLD
-                                      | GLOB_SKIPDOTS | GLOB_GLOBSTAR
-                                      | GLOB_DOTDOT | GLOB_TILDE
-                                      | GLOB_TILDE_CHECK
-                                      | glob_interm_period_flag (flags)))
-                            | GLOB_KEEP_SLASHES | GLOB_NOSORT
-                            | GLOB_ONLYDIR),
-                           errfunc, &base_dirs);
+          status = glob_body_inner (base_pat,
+                                    ((flags & (GLOB_ERR | GLOB_NOESCAPE
+                                               | GLOB_ALTDIRFUNC
+                                               | GLOB_EXTMATCH | GLOB_CASEFOLD
+                                               | GLOB_SKIPDOTS | GLOB_GLOBSTAR
+                                               | GLOB_DOTDOT | GLOB_TILDE
+                                               | GLOB_TILDE_CHECK
+                                               | glob_interm_period_flag (flags)))
+                                     | GLOB_KEEP_SLASHES | GLOB_NOSORT
+                                     | GLOB_ONLYDIR),
+                                    errfunc, &base_dirs);
           if (status == 0)
             {
               int gs_scan_flags
@@ -1715,16 +1961,16 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
         }
       else
         {
-          status = __glob (d,
-                           ((flags & (GLOB_ERR | GLOB_NOESCAPE
-                                      | GLOB_ALTDIRFUNC
-                                      | GLOB_EXTMATCH | GLOB_CASEFOLD
-                                      | GLOB_SKIPDOTS | GLOB_GLOBSTAR
-                                      | GLOB_DOTDOT | GLOB_TILDE
-                                      | GLOB_TILDE_CHECK
-                                      | glob_interm_period_flag (flags)))
-                            | GLOB_NOSORT | GLOB_ONLYDIR),
-                           errfunc, &dirs);
+          status = glob_body_inner (d,
+                                    ((flags & (GLOB_ERR | GLOB_NOESCAPE
+                                               | GLOB_ALTDIRFUNC
+                                               | GLOB_EXTMATCH | GLOB_CASEFOLD
+                                               | GLOB_SKIPDOTS | GLOB_GLOBSTAR
+                                               | GLOB_DOTDOT | GLOB_TILDE
+                                               | GLOB_TILDE_CHECK
+                                               | glob_interm_period_flag (flags)))
+                                     | GLOB_NOSORT | GLOB_ONLYDIR),
+                                    errfunc, &dirs);
         }
       if (status != 0)
         {
@@ -2046,6 +2292,23 @@ __glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
   return retval;
 }
 
+/* Run one glob call with its own FSWC context (see glob_fstatat).  */
+int
+GLOB_ATTRIBUTE
+__glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
+        glob_t *pglob)
+{
+#if GLOB_FSWC
+  struct fswc_call call = { 0 };
+  struct fswc_call *outer = glob_fswc_call;
+  glob_fswc_call = &call;
+#endif
+  int r = glob_body_inner (pattern, flags, errfunc, pglob);
+#if GLOB_FSWC
+  glob_fswc_call = outer;
+#endif
+  return r;
+}
 #if defined _LIBC && !defined __glob
 versioned_symbol (libc, __glob, glob, GLIBC_2_27);
 libc_hidden_ver (__glob, glob)

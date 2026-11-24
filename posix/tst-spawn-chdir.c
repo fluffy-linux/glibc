@@ -19,6 +19,8 @@
 #include <array_length.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <glob.h>
+#include <paths.h>
 #include <spawn.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -57,15 +59,146 @@ read_one_line (const char *path)
   return buffer;
 }
 
-/* Return the path to the "pwd" program.  */
-const char *
-get_pwd_program (void)
+static bool
+write_pwd_elf_stub (const char *path)
 {
-  const char *const paths[] = { "/bin/pwd", "/usr/bin/pwd" };
-  for (size_t i = 0; i < array_length (paths); ++i)
-    if (access (paths[i], X_OK) == 0)
-      return paths[i];
-  FAIL_EXIT1 ("cannot find pwd program");
+#if defined (__x86_64__)
+  static const unsigned char stub[120] =
+    {
+      0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      2, 0, 62, 0, 1, 0, 0, 0,
+      0x78, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      0x40, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+      1, 0, 0, 0, 5, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0,
+      0x00, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      0x00, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      174, 0, 0, 0, 0, 0, 0, 0,
+      174, 0, 0, 0, 0, 0, 0, 0,
+      0x00, 0x10, 0x00, 0x00, 0, 0, 0, 0
+    };
+  static const unsigned char code[54] =
+    {
+      0x48, 0x81, 0xec, 0x08, 0x10, 0x00, 0x00, /* sub $4104, %rsp */
+      0x48, 0x89, 0xe7,                         /* mov %rsp, %rdi */
+      0xbe, 0x00, 0x10, 0x00, 0x00,             /* mov $4096, %esi */
+      0xb8, 0x4f, 0x00, 0x00, 0x00,             /* mov $79, %eax (getcwd) */
+      0x0f, 0x05,                               /* syscall */
+      0x48, 0x89, 0xc2,                         /* mov %rax, %rdx */
+      0xc6, 0x44, 0x04, 0xff, 0x0a,             /* movb $'\n', -1(%rsp,%rax) */
+      0xbf, 0x01, 0x00, 0x00, 0x00,             /* mov $1, %edi */
+      0x48, 0x89, 0xe6,                         /* mov %rsp, %rsi */
+      0xb8, 0x01, 0x00, 0x00, 0x00,             /* mov $1, %eax (write) */
+      0x0f, 0x05,                               /* syscall */
+      0x31, 0xff,                               /* xor %edi, %edi */
+      0xb8, 0xe7, 0x00, 0x00, 0x00,             /* mov $231, %eax (exit_group) */
+      0x0f, 0x05                                /* syscall */
+    };
+  int fd = open (path, O_WRONLY | O_CREAT | O_TRUNC, 0700);
+  if (fd < 0)
+    return false;
+  bool ok = (write (fd, stub, sizeof (stub)) == (ssize_t) sizeof (stub)
+             && write (fd, code, sizeof (code)) == (ssize_t) sizeof (code));
+  xclose (fd);
+  return ok;
+#elif defined (__aarch64__)
+  static const unsigned char stub[120] =
+    {
+      0x7f, 'E', 'L', 'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      2, 0, 183, 0, 1, 0, 0, 0,
+      0x78, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      0x40, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 0, 64, 0, 56, 0, 1, 0, 0, 0, 0, 0, 0, 0,
+      1, 0, 0, 0, 5, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, 0, 0,
+      0x00, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      0x00, 0x00, 0x40, 0x00, 0, 0, 0, 0,
+      184, 0, 0, 0, 0, 0, 0, 0,
+      184, 0, 0, 0, 0, 0, 0, 0,
+      0x00, 0x10, 0x00, 0x00, 0, 0, 0, 0
+    };
+  static const unsigned char code[64] =
+    {
+      0xff, 0x07, 0x40, 0xd1, /* sub sp, sp, #4096 */
+      0xe0, 0x03, 0x00, 0x91, /* mov x0, sp */
+      0x01, 0x20, 0x82, 0xd2, /* mov x1, #4096 */
+      0x28, 0x02, 0x80, 0xd2, /* mov x8, #17 (getcwd) */
+      0x01, 0x00, 0x00, 0xd4, /* svc #0 */
+      0xe2, 0x03, 0x00, 0xaa, /* mov x2, x0 */
+      0x03, 0x04, 0x00, 0xd1, /* sub x3, x0, #1 */
+      0x44, 0x01, 0x80, 0x52, /* mov w4, #10 */
+      0xe4, 0x6b, 0x23, 0x38, /* strb w4, [sp, x3] */
+      0x20, 0x00, 0x80, 0xd2, /* mov x0, #1 */
+      0xe1, 0x03, 0x00, 0x91, /* mov x1, sp */
+      0x08, 0x08, 0x80, 0xd2, /* mov x8, #64 (write) */
+      0x01, 0x00, 0x00, 0xd4, /* svc #0 */
+      0x00, 0x00, 0x80, 0xd2, /* mov x0, #0 */
+      0xc8, 0x0b, 0x80, 0xd2, /* mov x8, #94 (exit_group) */
+      0x01, 0x00, 0x00, 0xd4  /* svc #0 */
+    };
+  int fd = open (path, O_WRONLY | O_CREAT | O_TRUNC, 0700);
+  if (fd < 0)
+    return false;
+  bool ok = (write (fd, stub, sizeof (stub)) == (ssize_t) sizeof (stub)
+             && write (fd, code, sizeof (code)) == (ssize_t) sizeof (code));
+  xclose (fd);
+  return ok;
+#else
+  (void) path;
+  return false;
+#endif
+}
+
+/* Return the path to the "pwd" program without assuming host-specific paths,
+   and ensure PATH can resolve "pwd" even if invoked with PATH="".  */
+static char *
+resolve_pwd_program (const char *tmp_dir)
+{
+  const char *env_path = getenv ("PATH");
+  const char *lists[2] =
+    {
+      (env_path != NULL && env_path[0] != '\0') ? env_path : NULL,
+      _PATH_DEFPATH ":" _PATH_STDPATH
+    };
+  for (size_t l = 0; l < array_length (lists); ++l)
+    {
+      if (lists[l] == NULL)
+        continue;
+      glob_t gl;
+      memset (&gl, 0, sizeof (gl));
+      if (glob (lists[l], GLOB_PATHS | GLOB_NOESCAPE, NULL, &gl) == 0)
+        {
+          for (size_t i = 0; i < gl.gl_pathc; ++i)
+            {
+              if (gl.gl_pathv[i][0] != '/')
+                continue;
+              char *cand = xasprintf ("%s/pwd", gl.gl_pathv[i]);
+              if (access (cand, X_OK) == 0)
+                {
+                  if (env_path == NULL || env_path[0] == '\0')
+                    TEST_COMPARE (setenv ("PATH", gl.gl_pathv[i], 1), 0);
+                  globfree (&gl);
+                  return cand;
+                }
+              free (cand);
+            }
+          globfree (&gl);
+        }
+    }
+
+  char *stub_dir = xasprintf ("%s/pwd_stub_bin", tmp_dir);
+  xmkdir (stub_dir, 0700);
+  add_temp_file (stub_dir);
+  char *stub_pwd = xasprintf ("%s/pwd", stub_dir);
+  if (!write_pwd_elf_stub (stub_pwd))
+    FAIL_EXIT1 ("cannot find pwd program and no static ELF stub for arch");
+  add_temp_file (stub_pwd);
+  TEST_COMPARE (setenv ("PATH", stub_dir, 1), 0);
+  free (stub_dir);
+  return stub_pwd;
 }
 
 /* Adds chdir operations to ACTIONS, using PATH.  If DO_FCHDIR, use
@@ -119,6 +252,8 @@ do_test (void)
   if (original_cwd == NULL)
     FAIL_EXIT1 ("get_current_dir_name: %m");
 
+  char *pwd_program = resolve_pwd_program (directory);
+
   int iteration = 0;
   for (int do_spawnp = 0; do_spawnp < 2; ++do_spawnp)
     for (int do_overwrite = 0; do_overwrite < 2; ++do_overwrite)
@@ -160,7 +295,7 @@ do_test (void)
              posix_spawn.  */
           char *pwd_symlink_path
             = xasprintf ("%s/subdir/pwd-symlink", iteration_directory);
-          xsymlink (get_pwd_program (), pwd_symlink_path);
+          xsymlink (pwd_program, pwd_symlink_path);
           add_temp_file (pwd_symlink_path);
 
           posix_spawn_file_actions_t actions;
@@ -226,6 +361,8 @@ do_test (void)
           free (output_file_path);
         }
 
+  free (pwd_program);
+  free (original_cwd);
   free (directory);
 
   return 0;

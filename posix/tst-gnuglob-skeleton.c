@@ -510,6 +510,41 @@ do_test (void)
 	"dir1lev1/",
 	"dir2lev1/");
 
+  /* GLOB_PATHS search lists (Fluffy, GLOB.md 3.2), through these
+     GLOB_ALTDIRFUNC hooks: a whole "*" component is the only wildcard
+     (names starting with "." excluded), matches are in byte order within
+     each element, and elements keep list order.  */
+  test ("dir2lev1/*:dir1lev1/*/file1lev3", GLOB_PATHS, 0,
+	"dir2lev1/dir1lev2",
+	"dir1lev1/dir2lev2/file1lev3");
+
+  test ("dir1lev1/dir3lev2/*:dir1lev1/dir2lev2/*", GLOB_PATHS, 0,
+	"dir1lev1/dir3lev2/file3lev3",
+	"dir1lev1/dir3lev2/file4lev3",
+	"dir1lev1/dir2lev2/dir1lev3",
+	"dir1lev1/dir2lev2/file1lev3",
+	"dir1lev1/dir2lev2/file2lev3");
+
+  test (":dir2lev1:dir1lev1/*:", GLOB_PATHS, 0,
+	".",
+	"dir2lev1",
+	"dir1lev1/dir1lev2",
+	"dir1lev1/dir2lev2",
+	"dir1lev1/dir3lev2",
+	"dir1lev1/file1lev2",
+	"dir1lev1/file2lev2",
+	"dir1lev1/file3lev2",
+	".");
+
+  /* "dir*lev2" is not a whole "*" component, so it is a literal name.  */
+  test ("dir1lev1/dir*lev2", GLOB_PATHS, GLOB_NOMATCH, NULL);
+
+  /* "{LIST}/NAME": NAME, literal, in each element.  */
+  test ("{dir1lev1/*:dir2lev1}/dir1lev2", GLOB_PATHS, 0,
+	"dir2lev1/dir1lev2");
+  test ("{dir1lev1/*}/file3lev3", GLOB_PATHS, 0,
+	"dir1lev1/dir3lev2/file3lev3");
+
   test ("dir1lev1/dir@(1|3)lev2/*", GLOB_EXTMATCH, 0,
 	"dir1lev1/dir3lev2/file3lev3",
 	"dir1lev1/dir3lev2/file4lev3");

@@ -288,6 +288,11 @@ tests := \
   tst-fnmatch6 \
   tst-fnmatch7 \
   tst-fork \
+  tst-fswc-edge \
+  tst-fswc-oracle \
+  tst-fswc-real \
+  tst-fswc-startup \
+  tst-fswc-vfork \
   tst-gai_strerror \
   tst-getopt_long1 \
   tst-glob-bz30635 \
@@ -396,12 +401,15 @@ endif
 ifeq (yesyes,$(build-shared)$(have-thread-library))
 tests += \
   tst-_Fork \
+  tst-fswc-concurrency \
   tst-getopt-cancel \
   # tests
 endif
 
 tests-static = \
   tst-exec-static \
+  tst-fswc-oracle-static \
+  tst-fswc-static \
   tst-libc-message \
   tst-spawn-static \
   # tests-static
@@ -412,7 +420,20 @@ tests += \
 
 others := \
   getconf \
+  tst-fswc-oracle-exec \
   # others
+
+# Static so that tst-fswc-oracle can run copies of it without the host's
+# ld.so; never installed.
+others-static += tst-fswc-oracle-exec
+others-noinstall += tst-fswc-oracle-exec
+$(objpfx)tst-fswc-oracle-exec: $(common-objpfx)elf/static-stubs.o
+
+modules-names = \
+  tst-fswc-oracle-audit \
+  tst-fswc-oracle-mod \
+  # modules-names
+extra-test-objs += $(addsuffix .os, $(modules-names))
 
 install-bin := \
   getconf \
@@ -563,6 +584,14 @@ $(objpfx)tst-fnmatch.out: $(gen-locales)
 $(objpfx)tst-fnmatch4.out: $(gen-locales)
 $(objpfx)tst-fnmatch5.out: $(gen-locales)
 $(objpfx)tst-fnmatch6.out: $(gen-locales)
+$(objpfx)tst-glob-fluffy-flags.out: $(gen-locales)
+$(objpfx)tst-fswc-oracle.out: $(gen-locales) \
+  $(objpfx)tst-fswc-oracle-exec $(objpfx)tst-fswc-oracle-mod.so \
+  $(objpfx)tst-fswc-oracle-audit.so \
+  $(common-objpfx)malloc/libc_malloc_debug.so
+$(objpfx)tst-fswc-oracle-static.out: $(gen-locales) \
+  $(objpfx)tst-fswc-oracle-exec $(objpfx)tst-fswc-oracle-mod.so
+$(objpfx)tst-fswc-startup.out: $(objpfx)tst-fswc-oracle-exec
 $(objpfx)tst-regex.out: $(gen-locales)
 $(objpfx)tst-regex2.out: $(gen-locales)
 $(objpfx)tst-regexloc.out: $(gen-locales)
@@ -621,6 +650,12 @@ tstgetopt-ARGS = -a -b -cfoobar --required foobar --optional=bazbug \
 tst-exec-ARGS = -- $(host-test-program-cmd)
 tst-exec-static-ARGS = $(tst-exec-ARGS)
 tst-execvpe5-ARGS = -- $(host-test-program-cmd)
+tst-fswc-edge-ARGS = -- $(host-test-program-cmd)
+tst-fswc-oracle-ARGS = -- $(host-test-program-cmd)
+tst-fswc-oracle-static-ARGS = $(tst-fswc-oracle-ARGS)
+tst-fswc-real-ARGS = -- $(host-test-program-cmd)
+tst-fswc-startup-ARGS = -- $(host-test-program-cmd)
+tst-fswc-vfork-ARGS = -- $(host-test-program-cmd)
 tst-spawn-ARGS = -- $(host-test-program-cmd)
 tst-spawn-static-ARGS = $(tst-spawn-ARGS)
 tst-spawn5-ARGS = -- $(host-test-program-cmd)
@@ -654,6 +689,7 @@ $(objpfx)runptests.o: $(objpfx)ptestcases.h
 
 $(objpfx)tst-getopt-cancel: $(shared-thread-library)
 $(objpfx)tst-_Fork: $(shared-thread-library)
+$(objpfx)tst-fswc-concurrency: $(shared-thread-library)
 
 test-xfail-annexc = yes
 $(objpfx)annexc.out: $(objpfx)annexc

@@ -16,6 +16,7 @@
    License along with the GNU C Library; if not, see
    <https://www.gnu.org/licenses/>.  */
 
+#include <fswc-index.h>
 #include <ctype.h>
 #include <libc-early-init.h>
 #include <libc-internal.h>
@@ -48,4 +49,12 @@ __libc_early_init (_Bool initial)
 
   /* Initialize system malloc (needs __libc_initial to be set).  */
   call_function_static_weak (__ptmalloc_init);
+
+#ifdef SHARED
+  /* Build or map the FSWC indexes.  Only the initial namespace of a
+     dynamically linked program builds; ld.so, static programs, forked
+     children, and AT_SECURE processes never do.  */
+  if (initial)
+    __fswc_build_all ();
+#endif
 }

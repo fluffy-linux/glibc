@@ -18,6 +18,7 @@
    <https://www.gnu.org/licenses/>.  */
 
 #include <elf.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libintl.h>
@@ -91,6 +92,30 @@ static const size_t system_dirs_len[] =
 };
 #define nsystem_dirs_len array_length (system_dirs_len)
 
+/* Does PATH[0..LEN) lie in the system directory DIR[0..DIRLEN), which
+   ends in '/'?  A component of DIR that is exactly "*" matches any one
+   component of PATH that does not start with '.' (Fluffy search lists,
+   GLOB.md 3.2), so a library in /sw/<pkg>/lib is in "/sw/" "*" "/lib/".  */
+static bool
+in_system_dir (const char *path, size_t len, const char *dir, size_t dirlen)
+{
+  size_t i = 0;
+  for (size_t j = 0; j < dirlen; ++j)
+    {
+      if (dir[j] == '*' && (j == 0 || dir[j - 1] == '/')
+	  && (j + 1 == dirlen || dir[j + 1] == '/'))
+	{
+	  if (i >= len || path[i] == '.' || path[i] == '/')
+	    return false;
+	  while (i < len && path[i] != '/')
+	    ++i;
+	}
+      else if (i >= len || path[i++] != dir[j])
+	return false;
+    }
+  return true;
+}
+
 static bool
 is_trusted_path_normalize (const char *path, size_t len)
 {
@@ -139,8 +164,7 @@ is_trusted_path_normalize (const char *path, size_t len)
 
   for (size_t idx = 0; idx < nsystem_dirs_len; ++idx)
     {
-      if (wnp - npath >= system_dirs_len[idx]
-	  && memcmp (trun, npath, system_dirs_len[idx]) == 0)
+      if (in_system_dir (npath, wnp - npath, trun, system_dirs_len[idx]))
 	{
 	  /* Found it.  */
 	  result = true;
@@ -502,14 +526,20 @@ fillin_rpath (char *rpath, struct r_search_path_elem **result, const char *sep,
 			   + ncapstr * sizeof (enum r_dir_status));
 	  *((char *) __mempcpy ((char *) dirp->dirname, cp, len)) = '\0';
 	  dirp->dirnamelen = len;
+	  dirp->is_pkg_wildcard = __fswc_has_star (cp, len);
 
-	  if (len > max_dirnamelen)
-	    max_dirnamelen = len;
+	  /* A "*" component becomes a package name of up to NAME_MAX.  */
+	  size_t maxlen = dirp->is_pkg_wildcard ? len + NAME_MAX : len;
+	  if (maxlen > max_dirnamelen)
+	    max_dirnamelen = maxlen;
 
 	  /* We have to make sure all the relative directories are
 	     never ignored.  The current directory might change and
-	     all our saved information would be void.  */
-	  init_val = cp[0] != '/' ? existing : unknown;
+	     all our saved information would be void.  An element with a
+	     "*" is searched package by package and is never cached as
+	     missing either.  */
+	  init_val = (cp[0] != '/' || dirp->is_pkg_wildcard
+		      ? existing : unknown);
 	  for (cnt = 0; cnt < ncapstr; ++cnt)
 	    dirp->status[cnt] = init_val;
 
@@ -717,6 +747,7 @@ _dl_init_paths (const char *llp, const char *source,
   pelem = GL(dl_all_dirs) = __rtld_search_dirs.dirs[0];
   strp = system_dirs;
   idx = 0;
+  bool system_star = false;
 
   do
     {
@@ -729,12 +760,14 @@ _dl_init_paths (const char *llp, const char *source,
 
       pelem->dirname = strp;
       pelem->dirnamelen = system_dirs_len[idx];
+      pelem->is_pkg_wildcard = __fswc_has_star (strp, system_dirs_len[idx]);
+      system_star |= pelem->is_pkg_wildcard;
       strp += system_dirs_len[idx] + 1;
 
       /* System paths must be absolute.  */
       assert (pelem->dirname[0] == '/');
       for (cnt = 0; cnt < ncapstr; ++cnt)
-	pelem->status[cnt] = unknown;
+	pelem->status[cnt] = pelem->is_pkg_wildcard ? existing : unknown;
 
       pelem->next = (++idx == nsystem_dirs_len ? NULL : (pelem + round_size));
 
@@ -743,6 +776,9 @@ _dl_init_paths (const char *llp, const char *source,
   while (idx < nsystem_dirs_len);
 
   max_dirnamelen = SYSTEM_DIRS_MAX_LEN;
+  if (system_star)
+    /* A "*" component becomes a package name of up to NAME_MAX.  */
+    max_dirnamelen += NAME_MAX;
   *aelem = NULL;
 
   /* This points to the map of the main object.  If there is no main
@@ -1760,6 +1796,190 @@ open_verify (const char *name, int fd,
    replaced with (void *) -1, and the old value is free()d if SPS->MALLOCED is
    true.  */
 
+/* This is an extra security effort to make sure nobody can preload broken
+   shared objects which are in the trusted directories and so exploit the
+   bugs.  Returns FD, or -1 (closing FD) if BUF must not be used.  */
+static int
+refuse_unsafe_preload (int fd, int mode, const char *buf)
+{
+  if (fd != -1 && __glibc_unlikely (mode & __RTLD_SECURE)
+      && __libc_enable_secure)
+    {
+      struct __stat64_t64 st;
+
+      if (__fstat64_time64 (fd, &st) != 0
+	  || (st.st_mode & S_ISUID) == 0)
+	{
+	  /* The shared object cannot be tested for being SUID
+	     or this bit is not set.  In this case we must not
+	     use this object.  */
+	  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_LIBS))
+	    _dl_debug_printf ("  refusing to load file=%s, the shared "
+			      "object cannot be tested for being "
+			      "SUID or the bit is not set\n",
+			      buf);
+	  __close_nocancel (fd);
+	  fd = -1;
+	  /* We simply ignore the file, signal this by setting
+	     the error value which would have been set by `open'.  */
+	  errno = ENOENT;
+	}
+    }
+  return fd;
+}
+
+/* Searching an element with a "*" component: every package of its prefix
+   in byte order, each with its hwcaps subdirectories, through the walker
+   that glob and execvp share (GLOB.md 3.2).  Candidates the FSWC index
+   proves absent cost no system call.  The walker's buffers are static:
+   library search runs with dl_load_lock held, or before other threads
+   exist, and ld.so's stack budget is small.  */
+static char star_path[PATH_MAX];
+static char star_scratch[64 * 1024] __attribute__ ((aligned (8)));
+/* A candidate file: the package directory, a hwcaps subdirectory, and the
+   name.  open_path's buffer is sized for its elements as written, and a
+   package name is longer than the "*" it replaces.  */
+static char star_file[PATH_MAX];
+
+/* One prepared index query per hwcaps subdirectory: "<rest>/<capstr><name>"
+   is the same question for every package.  */
+#define STAR_QUERIES 8
+static struct fswc_query star_queries[STAR_QUERIES];
+
+struct star_search
+{
+  const char *name;
+  size_t namelen;
+  int mode;
+  struct filebuf *fbp;
+  struct link_map *loader;
+  int whatcode;
+  bool *found_other_class;
+  char *buf;
+  size_t buflen;
+  int fd;
+  bool fatal;
+  const struct fswc_index *prepared;  /* STAR_QUERIES are for this.  */
+};
+
+static bool
+star_candidate (const struct fswc_candidate *c, void *closure)
+{
+  struct star_search *s = closure;
+  /* The directory itself is too long to open: ENAMETOOLONG, which (as
+     for any directory that cannot be opened) only skips it.  */
+  if (c->hint == FSWC_TOOLONG)
+    {
+      __set_errno (ENAMETOOLONG);
+      return true;
+    }
+  /* No such directory in this package.  Opening any file in it would
+     have failed, leaving the error of the last (plain, shortest) name.  */
+  if (c->hint == FSWC_ABSENT
+      || (c->hint > 0 && c->hint != DT_DIR && c->hint != DT_LNK))
+    {
+      __set_errno (c->len + 1 + s->namelen > sizeof star_file ? ENAMETOOLONG
+		   : c->hint == FSWC_ABSENT ? ENOENT : ENOTDIR);
+      return true;
+    }
+
+  for (size_t cnt = 0; cnt < ncapstr; ++cnt)
+    {
+      size_t need = c->len + 1 + s->namelen;
+#ifdef SHARED
+      need += capstr[cnt].len;
+#endif
+      if (need > sizeof star_file)
+	{
+	  /* open would fail with ENAMETOOLONG; carry on as below.  */
+	  __set_errno (ENAMETOOLONG);
+	  goto failed;
+	}
+      char *edp = __mempcpy (s->buf, c->path, c->len);
+      *edp++ = '/';
+#ifdef SHARED
+      size_t buflen = ((char *) __mempcpy (__mempcpy (edp, capstr[cnt].str,
+						      capstr[cnt].len),
+					   s->name, s->namelen)
+		       - s->buf);
+#else
+      size_t buflen = (char *) __mempcpy (edp, s->name, s->namelen) - s->buf;
+#endif
+      if (c->idx != NULL)
+	{
+	  /* The package-relative name, without the NUL.  */
+	  const char *rel = s->buf + c->rel_off;
+	  size_t rel_len = buflen - 1 - c->rel_off;
+	  int t;
+	  if (ncapstr <= STAR_QUERIES)
+	    {
+	      if (s->prepared != c->idx && cnt == 0)
+		{
+		  /* First indexed package: prepare every variant.  The
+		     relative names do not depend on the package, so build
+		     them from this one.  */
+		  for (size_t v = 0; v < ncapstr; ++v)
+		    {
+		      char *q = s->buf + c->len + 1;
+#ifdef SHARED
+		      q = __mempcpy (q, capstr[v].str, capstr[v].len);
+#endif
+		      q = __mempcpy (q, s->name, s->namelen);
+		      __fswc_query_prepare (&star_queries[v], c->idx, rel,
+					    q - 1 - rel);
+		    }
+		  s->prepared = c->idx;
+		  /* Rebuild this variant's name, overwritten above.  */
+		  edp = s->buf + c->len + 1;
+#ifdef SHARED
+		  __mempcpy (__mempcpy (edp, capstr[cnt].str, capstr[cnt].len),
+			     s->name, s->namelen);
+#else
+		  __mempcpy (edp, s->name, s->namelen);
+#endif
+		}
+	      t = (s->prepared == c->idx
+		   ? __fswc_query_answer (c->idx, &star_queries[cnt], c->top)
+		   : __fswc_lookup (c->idx, c->pkg, c->pkg_len, rel, rel_len));
+	    }
+	  else
+	    t = __fswc_lookup (c->idx, c->pkg, c->pkg_len, rel, rel_len);
+	  if (t == FSWC_ABSENT)
+	    {
+	      __set_errno (ENOENT);
+	      continue;
+	    }
+	}
+
+      if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_LIBS))
+	_dl_debug_printf ("  trying file=%s\n", s->buf);
+
+      int fd = open_verify (s->buf, -1, s->fbp, s->loader, s->whatcode,
+			    s->mode, s->found_other_class, false);
+      fd = refuse_unsafe_preload (fd, s->mode, s->buf);
+      if (fd != -1)
+	{
+	  s->fd = fd;
+	  s->buflen = buflen;
+	  return false;
+	}
+
+    failed:
+      /* As for any directory: keep searching only if the file does not
+	 exist or cannot be accessed, or the directory does not exist.  */
+      if (errno != ENOENT && errno != EACCES && errno != ENOTDIR)
+	{
+	  struct __stat64_t64 st;
+	  if (__stat64_time64 (c->path, &st) == 0 && S_ISDIR (st.st_mode))
+	    {
+	      s->fatal = true;
+	      return false;
+	    }
+	}
+    }
+  return true;
+}
+
 static int
 open_path (const char *name, size_t namelen, int mode,
 	   struct r_search_path_struct *sps, char **realname,
@@ -1803,6 +2023,51 @@ open_path (const char *name, size_t namelen, int mode,
 	{
 	  current_what = this_dir->what;
 	  print_search_path (dirs, current_what, this_dir->where, buf);
+	}
+
+      if (this_dir->is_pkg_wildcard)
+	{
+	  struct star_search s =
+	    {
+	      .name = name, .namelen = namelen, .mode = mode, .fbp = fbp,
+	      .loader = loader, .whatcode = whatcode,
+	      .found_other_class = found_other_class, .buf = star_file,
+	      .fd = -1,
+	    };
+	  /* Under LD_AUDIT or LD_DEBUG=libs every candidate must be tried,
+	     as the plain walk would.  */
+	  struct fswc_call call =
+	    {
+	      .no_index = ((GLRO(dl_debug_mask) & DL_DEBUG_LIBS) != 0
+#ifdef SHARED
+			   || GLRO(dl_naudit) != 0
+#endif
+			   ),
+	    };
+	  any = 1;
+	  __set_errno (ENOENT);
+	  __fswc_walk (&call, this_dir->dirname, this_dir->dirnamelen - 1, "",
+		       star_path, sizeof star_path, star_scratch,
+		       sizeof star_scratch, star_candidate, &s);
+	  if (s.fd != -1)
+	    {
+	      *realname = (char *) malloc (s.buflen);
+	      if (*realname != NULL)
+		{
+		  memcpy (*realname, star_file, s.buflen);
+		  dl_scratch_buffer_free (&scratch);
+		  return s.fd;
+		}
+	      __close_nocancel (s.fd);
+	      dl_scratch_buffer_free (&scratch);
+	      return -1;
+	    }
+	  if (s.fatal)
+	    {
+	      dl_scratch_buffer_free (&scratch);
+	      return -1;
+	    }
+	  continue;
 	}
 
       edp = (char *) __mempcpy (buf, this_dir->dirname, this_dir->dirnamelen);
@@ -1856,32 +2121,7 @@ open_path (const char *name, size_t namelen, int mode,
 	  /* Remember whether we found any existing directory.  */
 	  here_any |= this_dir->status[cnt] != nonexisting;
 
-	  if (fd != -1 && __glibc_unlikely (mode & __RTLD_SECURE)
-	      && __libc_enable_secure)
-	    {
-	      /* This is an extra security effort to make sure nobody can
-		 preload broken shared objects which are in the trusted
-		 directories and so exploit the bugs.  */
-	      struct __stat64_t64 st;
-
-	      if (__fstat64_time64 (fd, &st) != 0
-		  || (st.st_mode & S_ISUID) == 0)
-		{
-		  /* The shared object cannot be tested for being SUID
-		     or this bit is not set.  In this case we must not
-		     use this object.  */
-		  if (__glibc_unlikely (GLRO(dl_debug_mask) & DL_DEBUG_LIBS))
-		    _dl_debug_printf ("  refusing to load file=%s, the shared "
-				      "object cannot be tested for being "
-				      "SUID or the bit is not set\n",
-				      buf);
-		  __close_nocancel (fd);
-		  fd = -1;
-		  /* We simply ignore the file, signal this by setting
-		     the error value which would have been set by `open'.  */
-		  errno = ENOENT;
-		}
-	    }
+	  fd = refuse_unsafe_preload (fd, mode, buf);
 	}
 
       if (fd != -1)
@@ -2115,7 +2355,8 @@ _dl_map_new_object (struct link_map *loader, const char *name,
 
 		  do
 		    {
-		      if (memcmp (cached, dirp, system_dirs_len[cnt]) == 0)
+		      if (in_system_dir (cached, strlen (cached), dirp,
+					 system_dirs_len[cnt]))
 			{
 			  /* The prefix matches.  Don't use the entry.  */
 			  free (cached);
@@ -2250,6 +2491,52 @@ struct add_path_state
   char *allocptr;
 };
 
+/* Add DIR[0..LEN) (no trailing slash) to P.  In the filling pass, never
+   beyond what the counting pass measured: a "*" element is expanded
+   twice, and packages may come and go in between.  */
+static void
+add_one_path (struct add_path_state *p, const char *dir, size_t len,
+	      unsigned int flags)
+{
+  if (p->counting)
+    {
+      p->si->dls_cnt++;
+      p->si->dls_size += len + 1;
+    }
+  else if (p->idx < p->si->dls_cnt
+	   && p->allocptr + len + 1 <= (char *) p->si + p->si->dls_size)
+    {
+      Dl_serpath *const sp = &p->si->dls_serpath[p->idx++];
+      sp->dls_name = p->allocptr;
+      p->allocptr = __mempcpy (p->allocptr, dir, len);
+      *p->allocptr++ = '\0';
+      sp->dls_flags = flags;
+    }
+}
+
+struct serinfo_star
+{
+  struct add_path_state *p;
+  unsigned int flags;
+};
+
+/* Each package directory a "*" element names, if it exists.  */
+static bool
+serinfo_candidate (const struct fswc_candidate *c, void *closure)
+{
+  struct serinfo_star *ss = closure;
+  struct __stat64_t64 st;
+  if (c->hint == FSWC_TOOLONG)
+    return true;
+  if (c->hint == DT_DIR
+      || (c->hint < 0 && __stat64_time64 (c->path, &st) == 0
+	  && S_ISDIR (st.st_mode))
+      || (c->hint == DT_LNK && __stat64_time64 (c->path, &st) == 0
+	  && S_ISDIR (st.st_mode)))
+    add_one_path (ss->p, c->path, c->len, ss->flags);
+  return true;
+}
+
 static void
 add_path (struct add_path_state *p, const struct r_search_path_struct *sps,
 	  unsigned int flags)
@@ -2260,6 +2547,25 @@ add_path (struct add_path_state *p, const struct r_search_path_struct *sps,
       do
 	{
 	  const struct r_search_path_elem *const r = *dirs++;
+	  if (r->is_pkg_wildcard)
+	    {
+	      /* dlinfo need not hold dl_load_lock, so not the static
+		 buffers.  */
+	      enum { PATH_CAP = PATH_MAX, SCRATCH_CAP = 64 * 1024 };
+	      char *mem = __mmap (NULL, PATH_CAP + SCRATCH_CAP,
+				  PROT_READ | PROT_WRITE,
+				  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	      if (mem != MAP_FAILED)
+		{
+		  struct serinfo_star ss = { p, flags };
+		  struct fswc_call call = { 0 };
+		  __fswc_walk (&call, r->dirname, r->dirnamelen - 1, "",
+			       mem + SCRATCH_CAP, PATH_CAP, mem, SCRATCH_CAP,
+			       serinfo_candidate, &ss);
+		  __munmap (mem, PATH_CAP + SCRATCH_CAP);
+		}
+	      continue;
+	    }
 	  if (p->counting)
 	    {
 	      p->si->dls_cnt++;

@@ -74,6 +74,8 @@ sysdep_routines += \
   eventfd_read \
   eventfd_write \
   fanotify_mark \
+  fswc-build \
+  fswc-read \
   fxstat \
   fxstat64 \
   fxstatat \
@@ -678,6 +680,7 @@ dl-routines += \
 
 sysdep-rtld-routines += \
   dl-brk \
+  dl-fswc \
   dl-getcwd \
   dl-openat64 \
   dl-opendir \

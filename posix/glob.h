@@ -59,13 +59,15 @@ typedef __SIZE_TYPE__ size_t;
 # define GLOB_SKIPDOTS	 (1 << 26)/* Never match `.' or `..'.  */
 # define GLOB_CASEFOLD	 (1 << 27)/* Compare without regard to case.  */
 # define GLOB_EXTMATCH	 (1 << 28)/* Use ksh-like extended matching.  */
+# define GLOB_PATHS	 (1 << 29)/* Expand colon-separated PATH elements.  */
 # define GLOB_KEEP_SLASHES (1 << 30)/* Preserve redundant trailing slashes.  */
 # define __GLOB_FLAGS	(GLOB_ERR|GLOB_MARK|GLOB_NOSORT|GLOB_DOOFFS  \
 			 |GLOB_NOESCAPE|GLOB_NOCHECK|GLOB_APPEND     \
 			 |GLOB_PERIOD|GLOB_ALTDIRFUNC|GLOB_BRACE     \
 			 |GLOB_NOMAGIC|GLOB_TILDE|GLOB_ONLYDIR|GLOB_TILDE_CHECK \
 			 |GLOB_DOTDOT|GLOB_GLOBSTAR|GLOB_SKIPDOTS    \
-			 |GLOB_CASEFOLD|GLOB_EXTMATCH|GLOB_KEEP_SLASHES)
+			 |GLOB_CASEFOLD|GLOB_EXTMATCH|GLOB_PATHS     \
+			 |GLOB_KEEP_SLASHES)
 #else
 # define __GLOB_FLAGS	(GLOB_ERR|GLOB_MARK|GLOB_NOSORT|GLOB_DOOFFS  \
 			 |GLOB_NOESCAPE|GLOB_NOCHECK|GLOB_APPEND     \
