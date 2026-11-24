@@ -1,8 +1,8 @@
-# Begin /etc/hosts
+# Begin /sw/glibc/etc/hosts
 
-<192.168.0.2> <FQDN> [alias1] [alias2] ...
-::1       ip6-localhost ip6-loopback
+127.0.0.1 localhost
+::1       localhost ip6-localhost ip6-loopback
 ff02::1   ip6-allnodes
 ff02::2   ip6-allrouters
 
-# End /etc/hosts
+# End /sw/glibc/etc/hosts
