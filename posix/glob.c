@@ -1260,11 +1260,9 @@ prefix_array (const char *dirname, char **array, size_t n)
       size_t eltlen = strlen (array[i]) + 1;
       char *new = malloc (dirlen + 1 + eltlen);
       if (new == NULL)
-        {
-          while (i > 0)
-            free (array[--i]);
-          return 1;
-        }
+        /* ARRAY[0..I) are the new names and the rest the old ones:
+           every caller frees them all with globfree.  */
+        return 1;
 
       {
         char *endp = mempcpy (new, dirname, dirlen);
