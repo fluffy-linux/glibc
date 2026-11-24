@@ -500,6 +500,8 @@ do_test (void)
 
   test ("", GLOB_NOCHECK, 0, "");
 
+  test ("file1lev1/", 0, GLOB_NOMATCH, NULL);
+
   GLOBFREE_FUNC (&gl);
 
   return result;

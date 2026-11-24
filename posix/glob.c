@@ -1339,8 +1339,10 @@ glob_in_dir (const char *pattern, const char *directory, int flags,
       mempcpy (mempcpy (mempcpy (fullname, directory, dirlen),
                         "/", 1),
                pattern, patlen + 1);
-      if (glob_lstat (pglob, flags, fullname) == 0
-          || errno == EOVERFLOW)
+      if ((flags & GLOB_ONLYDIR)
+          ? is_dir (fullname, flags, pglob)
+          : (glob_lstat (pglob, flags, fullname) == 0
+             || errno == EOVERFLOW))
         /* We found this file to be existing.  Now tell the rest
            of the function to copy this name into the result.  */
         flags |= GLOB_NOCHECK;
