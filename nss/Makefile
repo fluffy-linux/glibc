@@ -426,7 +426,7 @@ generated		+= $(filter-out db-alias.c db-netgrp.c, \
 libnss_compat-routines	:= $(addprefix compat-,grp pwd spwd initgroups) \
 			   nisdomain
 
-install-others		+= $(inst_vardbdir)/Makefile
+install-others		+= $(inst_vardbdir)/Makefile $(inst_sysconfdir)/nsswitch.conf
 
 libnss_db-inhibit-o	= $(filter-out .os,$(object-suffixes))
 libnss_compat-inhibit-o	= $(filter-out .os,$(object-suffixes))
@@ -469,6 +469,11 @@ $(libnss_db-dbs:%=$(objpfx)%.c): $(objpfx)db-%.c: nss_files/files-%.c
 $(objpfx)makedb: $(makedb-modules:%=$(objpfx)%.o)
 
 $(inst_vardbdir)/Makefile: db-Makefile $(+force)
+	$(do-install)
+
+# Fluffy: the configuration a package ships, read before /etc's own
+# (nss_database.c).
+$(inst_sysconfdir)/nsswitch.conf: nsswitch.conf $(+force)
 	$(do-install)
 
 libnss_test1.so-no-z-defs = 1
