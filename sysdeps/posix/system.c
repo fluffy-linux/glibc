@@ -25,13 +25,14 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <stdio.h>
+#include <paths.h>
 
 #include <libc-lock.h>
 #include <not-errno.h>
 #include <not-cancel.h>
 #include <internal-signals.h>
 
-#define	SHELL_PATH	"/bin/sh"	/* Path of the shell.  */
+#define	SHELL_PATH	_PATH_BSHELL	/* Path of the shell.  */
 #define	SHELL_NAME	"sh"		/* Name to give it.  */
 
 

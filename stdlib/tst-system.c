@@ -196,6 +196,14 @@ do_test (void)
     xpthread_join (long_sleep_thread);
   }
 
+  /* POSIX requires system() to behave like "sh -c".  Where _PATH_BSHELL
+     is bash (Fluffy: /sw/bash/bin/sh -> bash), it must run in POSIX mode.
+     Checked before the RLIMIT_NPROC test, which is unsupported when
+     running as root without a nobody user.  */
+  TEST_COMPARE (system ("test -z \"$BASH_VERSION\""
+                        " || case :$SHELLOPTS: in *:posix:*) ;; *) exit 1;; esac"),
+                0);
+
   {
     /* RLIMIT_NPROC is not enforced for root.  Switch to user nobody
        if it exists.  */

@@ -38,7 +38,7 @@
 #define	_PATH_STDPATH \
 	"/usr/bin:/bin:/usr/sbin:/sbin"
 
-#define	_PATH_BSHELL	"/bin/sh"
+#define	_PATH_BSHELL	"/sw/bash/bin/sh"
 #define	_PATH_CONSOLE	"/dev/console"
 #define	_PATH_CSHELL	"/bin/csh"
 #define	_PATH_DEVDB	"/var/run/dev.db"
