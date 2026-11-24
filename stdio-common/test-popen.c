@@ -16,8 +16,10 @@
    <https://www.gnu.org/licenses/>.  */
 
 #include <errno.h>
+#include <paths.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 static void
 write_data (FILE *stream)
@@ -59,31 +61,8 @@ do_test (void)
      the perhaps incompatible new shared libraries.  */
   unsetenv ("LD_LIBRARY_PATH");
 
-  output = popen ("/bin/cat >" OBJPFX "tstpopen.tmp", "w");
-  if (output == NULL)
-    {
-      perror ("popen");
-      puts ("Test FAILED!");
-      exit (1);
-    }
-  write_data (output);
-  wstatus = pclose (output);
-  printf ("writing pclose returned %d\n", wstatus);
-  input = popen ("/bin/cat " OBJPFX "tstpopen.tmp", "r");
-  if (input == NULL)
-    {
-      perror (OBJPFX "tstpopen.tmp");
-      puts ("Test FAILED!");
-      exit (1);
-    }
-  read_data (input);
-  rstatus = pclose (input);
-  printf ("reading pclose returned %d\n", rstatus);
-
-  remove (OBJPFX "tstpopen.tmp");
-
   errno = 0;
-  output = popen ("/bin/cat", "m");
+  output = popen ("cat", "m");
   if (output != NULL)
     {
       puts ("popen called with illegal mode does not return NULL");
@@ -96,6 +75,41 @@ do_test (void)
       puts ("Test FAILED!");
       exit (1);
     }
+
+  if (access (_PATH_BSHELL, X_OK) != 0)
+    {
+      puts ("_PATH_BSHELL is unavailable in this environment; skipping shell popen check.");
+      return 77;
+    }
+
+  const char *cur_path = getenv ("PATH");
+  if (cur_path == NULL || cur_path[0] == '\0')
+    setenv ("PATH", _PATH_DEFPATH ":" _PATH_STDPATH, 1);
+
+  output = popen ("while IFS= read -r l; do printf '%s\\n' \"$l\"; done >"
+		  OBJPFX "tstpopen.tmp", "w");
+  if (output == NULL)
+    {
+      perror ("popen");
+      puts ("Test FAILED!");
+      exit (1);
+    }
+  write_data (output);
+  wstatus = pclose (output);
+  printf ("writing pclose returned %d\n", wstatus);
+  input = popen ("while IFS= read -r l; do printf '%s\\n' \"$l\"; done <"
+		 OBJPFX "tstpopen.tmp", "r");
+  if (input == NULL)
+    {
+      perror (OBJPFX "tstpopen.tmp");
+      puts ("Test FAILED!");
+      exit (1);
+    }
+  read_data (input);
+  rstatus = pclose (input);
+  printf ("reading pclose returned %d\n", rstatus);
+
+  remove (OBJPFX "tstpopen.tmp");
 
   puts (wstatus | rstatus  ? "Test FAILED!" : "Test succeeded.");
   return (wstatus | rstatus);

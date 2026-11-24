@@ -115,7 +115,7 @@ do_test (void)
   fails |= test_wrp (EBADF, accept, -1, &sa, &sl);
   fails |= test_wrp (EINVAL, access, "/", -1);
   fails |= test_wrp (EBADF, bind, -1, (struct sockaddr *)&sin, sizeof sin);
-  fails |= test_wrp (ENOTDIR, chdir, "/bin/sh");
+  fails |= test_wrp (ENOTDIR, chdir, "/dev/null");
   fails |= test_wrp (EBADF, close, -1);
   fails |= test_wrp (EBADF, connect, -1, (struct sockaddr *)&sin, sizeof sin);
   fails |= test_wrp (EBADF, dup, -1);
@@ -148,7 +148,7 @@ do_test (void)
   fails |= test_wrp (EINVAL, mprotect, (void *) -1, pagesize, -1);
   fails |= test_wrp (EINVAL, msync, (void *) -1, pagesize, -1);
   fails |= test_wrp (EINVAL, munmap, (void *) -1, 0);
-  fails |= test_wrp (EISDIR, open, "/bin", EISDIR, O_WRONLY);
+  fails |= test_wrp (EISDIR, open, "/tmp", EISDIR, O_WRONLY);
   fails |= test_wrp (EBADF, read, -1, buf, 1);
   fails |= test_wrp (EINVAL, readlink, "/", buf, sizeof buf);
   fails |= test_wrp (EBADF, readv, -1, iov, 1);
