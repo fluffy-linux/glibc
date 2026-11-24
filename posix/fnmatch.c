@@ -285,6 +285,7 @@ fnmatch (const char *pattern, const char *string, int flags)
 }
 
 #undef fnmatch
+libc_hidden_def (__fnmatch)
 versioned_symbol (libc, __fnmatch, fnmatch, GLIBC_2_2_3);
 #if SHLIB_COMPAT(libc, GLIBC_2_0, GLIBC_2_2_3)
 strong_alias (__fnmatch, __fnmatch_old)

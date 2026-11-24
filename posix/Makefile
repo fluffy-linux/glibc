@@ -107,6 +107,7 @@ routines := \
   glob64 \
   glob64-lstat-compat \
   glob64-time64 \
+  glob_notilde \
   glob_pattern_p \
   globfree \
   globfree64 \
@@ -633,6 +634,7 @@ CFLAGS-spawni.c += -fexceptions
 CFLAGS-spawni.os = -fomit-frame-pointer
 CFLAGS-glob.c += $(uses-callbacks) -fexceptions
 CFLAGS-glob64.c += $(uses-callbacks) -fexceptions
+CFLAGS-glob_notilde.c += $(uses-callbacks) -fexceptions
 CFLAGS-getconf.c += -DGETCONF_DIR='"$(libexecdir)/getconf"'
 CFLAGS-execve.os = -fomit-frame-pointer
 CFLAGS-fexecve.os = -fomit-frame-pointer

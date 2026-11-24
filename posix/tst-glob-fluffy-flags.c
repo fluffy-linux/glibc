@@ -8,6 +8,7 @@
 #include <fnmatch.h>
 #include <ftw.h>
 #include <glob.h>
+#include <pwd.h>
 #include <limits.h>
 #include <locale.h>
 #include <spawn.h>
@@ -623,6 +624,40 @@ do_test (void)
     else
       unsetenv ("HOME");
     free (long_home);
+  }
+
+  /* Without HOME, "~" is the home directory of the login name, looked up
+     with getlogin_r and getpwnam_r, and "~root" that of root; when the
+     lookup finds nothing (a build sandbox may have no login name) or the
+     directory does not exist, GLOB_NOCHECK gives the pattern back.  */
+  {
+    const char *old_home = getenv ("HOME");
+    char *saved_home = old_home != NULL ? xstrdup (old_home) : NULL;
+    unsetenv ("HOME");
+    static const char *const tildes[] = { "~", "~root" };
+    for (size_t i = 0; i < 2; ++i)
+      {
+        struct passwd *pw = NULL;
+        char login[256];
+        if (i == 1)
+          pw = getpwnam ("root");
+        else if (getlogin_r (login, sizeof (login)) == 0)
+          pw = getpwnam (login);
+        glob_t tg;
+        memset (&tg, 0, sizeof (tg));
+        TEST_COMPARE (glob (tildes[i], GLOB_TILDE | GLOB_NOCHECK, NULL, &tg),
+                      0);
+        TEST_COMPARE (tg.gl_pathc, 1);
+        TEST_VERIFY (strcmp (tg.gl_pathv[0], tildes[i]) == 0
+                     || (pw != NULL
+                         && strcmp (tg.gl_pathv[0], pw->pw_dir) == 0));
+        globfree (&tg);
+      }
+    if (saved_home != NULL)
+      {
+        TEST_COMPARE (setenv ("HOME", saved_home, 1), 0);
+        free (saved_home);
+      }
   }
 
   xchdir ("/");

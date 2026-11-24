@@ -348,6 +348,7 @@ xtests := \
   # xtests
 
 tests-container := \
+  tst-fluffy-stateless-etc \
   tst-initgroups1 \
   tst-initgroups2 \
   tst-nss-action-parse \

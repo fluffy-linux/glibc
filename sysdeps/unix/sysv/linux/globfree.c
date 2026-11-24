@@ -21,10 +21,14 @@
 #include <kernel_stat.h>
 
 #define globfree64 __no_globfree64_decl
+#define __globfree64 __no___globfree64_decl
 #include <posix/globfree.c>
 #undef globfree64
+#undef __globfree64
 
 #if XSTAT_IS_XSTAT64
-weak_alias (globfree, globfree64)
-libc_hidden_ver (globfree, globfree64)
+strong_alias (__globfree, __globfree64)
+libc_hidden_ver (__globfree, __globfree64)
+weak_alias (__globfree, globfree64)
+libc_hidden_ver (__globfree, globfree64)
 #endif

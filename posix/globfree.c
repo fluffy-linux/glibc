@@ -25,7 +25,11 @@
 
 /* Free storage allocated in PGLOB by a previous `glob' call.  */
 void
+#if defined _LIBC && !defined globfree
+__globfree (glob_t *pglob)
+#else
 globfree (glob_t *pglob)
+#endif
 {
   if (pglob->gl_pathv != NULL)
     {
@@ -36,6 +40,8 @@ globfree (glob_t *pglob)
       pglob->gl_pathv = NULL;
     }
 }
-#ifndef globfree
-libc_hidden_def (globfree)
+#if defined _LIBC && !defined globfree
+libc_hidden_def (__globfree)
+weak_alias (__globfree, globfree)
+libc_hidden_weak (globfree)
 #endif

@@ -556,7 +556,18 @@ __resolv_conf_load (struct __res_state *preinit,
   /* Ensure that /etc/host.conf has been loaded (once).  */
   _res_hconf_init ();
 
-  FILE *fp = fopen (_PATH_RESCONF, "rce");
+  char *alloc_path = NULL;
+  const char *res_path = _PATH_RESCONF;
+  if (!__resolv_conf_select_path (&alloc_path, &res_path))
+    return NULL;
+  int saved_open_errno = errno;
+  FILE *fp = fopen (res_path, "rce");
+  int fp_errno = errno;
+  free (alloc_path);
+  if (fp == NULL)
+    __set_errno (fp_errno);
+  else
+    __set_errno (saved_open_errno);
   if (fp == NULL)
     switch (errno)
       {

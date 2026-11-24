@@ -24,7 +24,11 @@
 #include <resolv-internal.h>
 #include <sys/stat.h>
 #include <libc-symbols.h>
+#include <errno.h>
 #include <file_change_detection.h>
+#include <glob.h>
+#include <paths.h>
+#include <unistd.h>
 
 /* _res._u._ext.__glibc_extension_index is used as an index into a
    struct resolv_conf_array object.  The intent of this construction
@@ -120,11 +124,74 @@ conf_decrement (struct resolv_conf *conf)
     free (conf);
 }
 
+bool
+__resolv_conf_select_path (char **alloc_out, const char **path_out)
+{
+  *alloc_out = NULL;
+  *path_out = _PATH_RESCONF;
+
+  int saved_errno = errno;
+  struct __stat64_t64 st;
+  if (__stat64_time64 (_PATH_RESCONF, &st) == 0)
+    {
+      if (!S_ISDIR (st.st_mode))
+        {
+          __set_errno (saved_errno);
+          return true;
+        }
+    }
+  else if (errno != ENOENT && errno != ENOTDIR)
+    {
+      __set_errno (saved_errno);
+      return true;
+    }
+
+  glob64_t gl = { 0 };
+  int gr = __glob64_notilde (_PATH_VENDOR_RESCONF, GLOB_PATHS | GLOB_NOESCAPE,
+                             NULL, &gl);
+  if (gr == GLOB_NOSPACE)
+    {
+      __globfree64 (&gl);
+      __set_errno (ENOMEM);
+      return false;
+    }
+  if (gr == 0)
+    {
+      for (size_t i = 0; i < gl.gl_pathc; ++i)
+        {
+          if (__stat64_time64 (gl.gl_pathv[i], &st) == 0
+              && !S_ISDIR (st.st_mode)
+              && __access (gl.gl_pathv[i], R_OK) == 0)
+            {
+              *alloc_out = __strdup (gl.gl_pathv[i]);
+              if (*alloc_out == NULL)
+                {
+                  __globfree64 (&gl);
+                  return false;
+                }
+              *path_out = *alloc_out;
+              break;
+            }
+        }
+      __globfree64 (&gl);
+    }
+
+  __set_errno (saved_errno);
+  return true;
+}
+
 struct resolv_conf *
 __resolv_conf_get_current (void)
 {
+  char *alloc_path = NULL;
+  const char *res_path = _PATH_RESCONF;
+  if (!__resolv_conf_select_path (&alloc_path, &res_path))
+    return NULL;
+
   struct file_change_detection initial;
-  if (!__file_change_detection_for_path (&initial, _PATH_RESCONF))
+  bool det_ok = __file_change_detection_for_path (&initial, res_path);
+  free (alloc_path);
+  if (!det_ok)
     return NULL;
 
   struct resolv_conf_global *global_copy = get_locked_global ();

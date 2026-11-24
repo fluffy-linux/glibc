@@ -71,6 +71,9 @@ struct file_change_detection;
    the struct __res_state object.  If CHANGE is not null, file change
    detection data is written to *CHANGE, based on the state of the
    file after reading it.  */
+bool __resolv_conf_select_path (char **alloc_out, const char **path_out)
+  attribute_hidden;
+
 struct resolv_conf *__resolv_conf_load (struct __res_state *preinit,
                                         struct file_change_detection *change)
   attribute_hidden __attribute__ ((warn_unused_result));

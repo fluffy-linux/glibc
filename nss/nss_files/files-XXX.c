@@ -103,9 +103,9 @@ libc_hidden_def (CONCAT (_nss_files_end,ENTNAME))
 
 /* Parsing the database file into `struct STRUCTURE' data structures.  */
 static enum nss_status
-internal_getent (FILE *stream, struct STRUCTURE *result,
-		 char *buffer, size_t buflen, int *errnop H_ERRNO_PROTO
-		 EXTRA_ARGS_DECL)
+internal_getent_off (FILE *stream, struct STRUCTURE *result,
+		     char *buffer, size_t buflen, off64_t *poffset,
+		     int *errnop H_ERRNO_PROTO EXTRA_ARGS_DECL)
 {
   struct parser_data *data = (void *) buffer;
   size_t linebuflen = buffer + buflen - data->linebuffer;
@@ -139,6 +139,8 @@ internal_getent (FILE *stream, struct STRUCTURE *result,
 	  if (ret == 0)
 	    {
 	      /* Line has been parsed successfully.  */
+	      if (poffset != NULL)
+		*poffset = original_offset;
 	      __set_errno (saved_errno);
 	      return NSS_STATUS_SUCCESS;
 	    }
@@ -160,6 +162,16 @@ internal_getent (FILE *stream, struct STRUCTURE *result,
 }
 
 
+
+static inline enum nss_status
+internal_getent (FILE *stream, struct STRUCTURE *result,
+		 char *buffer, size_t buflen, int *errnop H_ERRNO_PROTO
+		 EXTRA_ARGS_DECL)
+{
+  return internal_getent_off (stream, result, buffer, buflen, NULL, errnop
+			      H_ERRNO_ARG EXTRA_ARGS);
+}
+
 /* Return the next entry from the database file, doing locking.  */
 enum nss_status
 CONCAT(_nss_files_get,ENTNAME_r) (struct STRUCTURE *result, char *buffer,
@@ -175,8 +187,37 @@ CONCAT(_nss_files_get,ENTNAME_r) (struct STRUCTURE *result, char *buffer,
   if (status != NSS_STATUS_SUCCESS)
     return status;
 
+#ifdef DEDUP_KEY
+  while (true)
+    {
+      off64_t line_off = -1;
+      status = internal_getent_off (data->stream, result, buffer, buflen,
+				    &line_off, errnop
+				    H_ERRNO_ARG EXTRA_ARGS_VALUE);
+      if (status != NSS_STATUS_SUCCESS)
+	break;
+      int fidx = __nss_files_file_index (data->stream, line_off);
+      const char *dkey = DEDUP_KEY (result);
+      if (fidx >= 0 && dkey != NULL && dkey[0] != '\0'
+	  && dkey[0] != '+' && dkey[0] != '-')
+	{
+	  int seen = __nss_files_data_check_seen (data, dkey, fidx);
+	  if (seen < 0)
+	    {
+	      *errnop = ENOMEM;
+	      H_ERRNO_SET (NETDB_INTERNAL);
+	      status = NSS_STATUS_TRYAGAIN;
+	      break;
+	    }
+	  if (seen > 0)
+	    continue;
+	}
+      break;
+    }
+#else
   status = internal_getent (data->stream, result, buffer, buflen, errnop
 			    H_ERRNO_ARG EXTRA_ARGS_VALUE);
+#endif
 
   __nss_files_data_put (data);
   return status;

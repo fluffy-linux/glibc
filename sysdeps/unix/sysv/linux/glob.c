@@ -19,6 +19,10 @@
 #include <sys/stat.h>
 #include <kernel_stat.h>
 
+#if XSTAT_IS_XSTAT64
+# define GLOB_COMPILE_TILDE_WRAPPER 1
+#endif
+
 #define struct_stat    struct stat
 #define struct_stat64  struct stat64
 #define GLOB_LSTAT     gl_lstat
@@ -33,5 +37,9 @@
 
 #if XSTAT_IS_XSTAT64
 strong_alias (__glob, __glob64)
+libc_hidden_ver (__glob, __glob64)
 versioned_symbol (libc, __glob64, glob64, GLIBC_2_27);
+# if IS_IN (libc)
+hidden_def_alias (__glob, __GI_glob64)
+# endif
 #endif

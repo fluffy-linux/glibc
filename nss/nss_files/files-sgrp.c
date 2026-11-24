@@ -28,6 +28,7 @@ struct sgent_data {};
    to parse lines from the database file.  */
 #define EXTERN_PARSER
 #include "files-parse.c"
+#define DEDUP_KEY(r)	((r)->sg_namp)
 #include GENERIC
 
 DB_LOOKUP (sgnam, '.', 0, ("%s", name),

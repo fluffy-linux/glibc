@@ -22,7 +22,9 @@
 #include <errno.h>
 #include <netdb.h>
 #include <nss.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* This collects all per file-data.   */
 struct nss_files_data
@@ -41,11 +43,95 @@ nss_files_global_allocate (void *closure)
       for (int i = 0; i < nss_file_count; ++i)
         {
           result->files[i].stream = NULL;
+          result->files[i].seen_slots = NULL;
+          result->files[i].seen_count = 0;
+          result->files[i].seen_cap = 0;
           __libc_lock_init (result->files[i].lock);
         }
     }
   return result;
 }
+
+static uint32_t
+nss_seen_hash (const char *s)
+{
+  uint32_t h = 2166136261u;
+  for (const unsigned char *p = (const unsigned char *) s; *p != '\0'; ++p)
+    h = (h ^ *p) * 16777619u;
+  return h == 0 ? 1u : h;
+}
+
+static void
+nss_seen_clear (struct nss_files_per_file_data *data)
+{
+  if (data->seen_slots != NULL)
+    {
+      for (size_t i = 0; i < data->seen_cap; ++i)
+        free (data->seen_slots[i].name);
+      free (data->seen_slots);
+      data->seen_slots = NULL;
+    }
+  data->seen_count = 0;
+  data->seen_cap = 0;
+}
+
+int
+__nss_files_data_check_seen (struct nss_files_per_file_data *data,
+                             const char *name, int file_idx)
+{
+  if (file_idx < 0 || name == NULL || name[0] == '\0')
+    return 0;
+
+  uint32_t h = nss_seen_hash (name);
+  if (data->seen_cap > 0)
+    {
+      size_t mask = data->seen_cap - 1;
+      size_t idx = h & mask;
+      while (data->seen_slots[idx].name != NULL)
+        {
+          if (data->seen_slots[idx].hash == h
+              && strcmp (data->seen_slots[idx].name, name) == 0)
+            return data->seen_slots[idx].file_idx < file_idx ? 1 : 0;
+          idx = (idx + 1) & mask;
+        }
+    }
+
+  if ((data->seen_count + 1) * 2 >= data->seen_cap)
+    {
+      size_t new_cap = data->seen_cap == 0 ? 32 : data->seen_cap * 2;
+      struct nss_files_seen_slot *new_slots
+        = calloc (new_cap, sizeof (*new_slots));
+      if (new_slots == NULL)
+        return -1;
+      size_t new_mask = new_cap - 1;
+      for (size_t i = 0; i < data->seen_cap; ++i)
+        if (data->seen_slots[i].name != NULL)
+          {
+            size_t nidx = data->seen_slots[i].hash & new_mask;
+            while (new_slots[nidx].name != NULL)
+              nidx = (nidx + 1) & new_mask;
+            new_slots[nidx] = data->seen_slots[i];
+          }
+      free (data->seen_slots);
+      data->seen_slots = new_slots;
+      data->seen_cap = new_cap;
+    }
+
+  char *dup = __strdup (name);
+  if (dup == NULL)
+    return -1;
+
+  size_t mask = data->seen_cap - 1;
+  size_t idx = h & mask;
+  while (data->seen_slots[idx].name != NULL)
+    idx = (idx + 1) & mask;
+  data->seen_slots[idx].name = dup;
+  data->seen_slots[idx].hash = h;
+  data->seen_slots[idx].file_idx = file_idx;
+  ++data->seen_count;
+  return 0;
+}
+
 /* Like __nss_files_data_open, but does not perform the open call.  */
 static enum nss_status
 __nss_files_data_get (struct nss_files_per_file_data **pdata,
@@ -129,6 +215,7 @@ __nss_files_data_setent (enum nss_files_file file, const char *path)
   if (status != NSS_STATUS_SUCCESS)
     return status;
 
+  nss_seen_clear (data);
   if (data->stream == NULL)
     status = __nss_files_data_internal_open (data, path);
   else
@@ -149,6 +236,7 @@ __nss_files_data_endent (enum nss_files_file file)
 
   struct nss_files_per_file_data *fdata = &data->files[file];
   __libc_lock_lock (fdata->lock);
+  nss_seen_clear (fdata);
   if (fdata->stream != NULL)
     {
       fclose (fdata->stream);

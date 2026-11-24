@@ -41,7 +41,7 @@
 # define WINDOWS32
 #endif
 
-#ifndef WINDOWS32
+#if !defined WINDOWS32 && !defined GLOB_COMPILE_NOTILDE
 # include <pwd.h>
 #endif
 
@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <alloca.h>
+#include <fnmatch.h>
 
 #ifdef _LIBC
 # undef strdup
@@ -60,6 +61,10 @@
 # undef dirfd
 # define dirfd(str) __dirfd (str)
 # define readdir(str) __readdir64 (str)
+# define fnmatch(pat, str, flg) __fnmatch (pat, str, flg)
+# ifndef globfree
+#  define globfree(pglob) __globfree (pglob)
+# endif
 # define getpwnam_r(name, bufp, buf, len, res) \
     __getpwnam_r (name, bufp, buf, len, res)
 # define FLEXIBLE_ARRAY_MEMBER
@@ -77,6 +82,7 @@
 # endif
 # include <shlib-compat.h>
 #else /* !_LIBC */
+typedef int (*__glob_homedir_fn_t) (const char *, char **);
 # define __glob                 glob
 # define __getlogin_r(buf, len) getlogin_r (buf, len)
 # define __fxstatat64(_, d, f, st, flag) fstatat (d, f, st, flag)
@@ -91,11 +97,95 @@
 # define GLOB_FSTATAT64         fstatat
 #endif /* _LIBC */
 
-#include <fnmatch.h>
+#include <scratch_buffer.h>
+
+#ifndef GLOB_ATTRIBUTE
+# define GLOB_ATTRIBUTE
+#endif
+
+#if !defined WINDOWS32 && !defined GLOB_COMPILE_NOTILDE
+static int
+glob_lookup_homedir (const char *user, char **out_dir)
+{
+  *out_dir = NULL;
+  struct passwd *p = NULL;
+  struct scratch_buffer s;
+  scratch_buffer_init (&s);
+
+  if (user == NULL)
+    {
+      int err;
+# if defined HAVE_GETPWNAM_R || defined _LIBC
+      struct passwd pwbuf;
+# endif
+      while (true)
+        {
+          p = NULL;
+          err = __getlogin_r (s.data, s.length);
+          if (err == 0)
+            {
+# if defined HAVE_GETPWNAM_R || defined _LIBC
+              size_t ssize = strlen (s.data) + 1;
+              char *sdata = s.data;
+              err = getpwnam_r (sdata, &pwbuf, sdata + ssize,
+                                s.length - ssize, &p);
+# else
+              p = getpwnam (s.data);
+              if (p == NULL)
+                err = errno;
+# endif
+            }
+          if (err != ERANGE)
+            break;
+          if (!scratch_buffer_grow (&s))
+            return GLOB_NOSPACE;
+        }
+      if (err != 0)
+        p = NULL;
+    }
+  else
+    {
+# if defined HAVE_GETPWNAM_R || defined _LIBC
+      struct passwd pwbuf;
+      while (getpwnam_r (user, &pwbuf, s.data, s.length, &p) == ERANGE)
+        {
+          if (!scratch_buffer_grow (&s))
+            return GLOB_NOSPACE;
+        }
+# else
+      p = getpwnam (user);
+# endif
+    }
+
+  int ret = 0;
+  if (p != NULL)
+    {
+      *out_dir = strdup (p->pw_dir);
+      if (*out_dir == NULL)
+        ret = GLOB_NOSPACE;
+    }
+  scratch_buffer_free (&s);
+  return ret;
+}
+#endif
+
+#ifdef GLOB_COMPILE_TILDE_WRAPPER
+int
+GLOB_ATTRIBUTE
+__glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
+        glob_t *pglob)
+{
+  return __glob_internal (pattern, flags, errfunc, pglob,
+                          glob_lookup_homedir);
+}
+# if defined _LIBC && !defined __glob
+versioned_symbol (libc, __glob, glob, GLIBC_2_27);
+libc_hidden_ver (__glob, glob)
+# endif
+#else /* !GLOB_COMPILE_TILDE_WRAPPER */
 
 #include <flexmember.h>
 #include <glob_internal.h>
-#include <scratch_buffer.h>
 #if defined _LIBC && defined __linux__
 # include <fswc-index.h>
 # define GLOB_FSWC 1
@@ -700,15 +790,12 @@ globstar_scan (const char *sdir, int flags, int gs_flags,
   return 0;
 }
 
-#ifndef GLOB_ATTRIBUTE
-# define GLOB_ATTRIBUTE
-#endif
 
 static int
 GLOB_ATTRIBUTE
 glob_body_inner (const char *pattern, int flags,
                  int (*errfunc) (const char *, int),
-                 glob_t *pglob);
+                 glob_t *pglob, __glob_homedir_fn_t homedir_fn);
 
 
 #if GLOB_FSWC
@@ -917,7 +1004,7 @@ static int
 GLOB_ATTRIBUTE
 glob_body_inner (const char *pattern, int flags,
                  int (*errfunc) (const char *, int),
-                 glob_t *pglob)
+                 glob_t *pglob, __glob_homedir_fn_t homedir_fn)
 {
   const char *filename;
   char *dirname = NULL;
@@ -1070,7 +1157,7 @@ glob_body_inner (const char *pattern, int flags,
               result = glob_body_inner (onealt,
                                         ((flags & ~(GLOB_NOCHECK | GLOB_NOMAGIC))
                                          | GLOB_APPEND),
-                                        errfunc, pglob);
+                                        errfunc, pglob, homedir_fn);
 
               /* If we got an error, return it.  */
               if (result && result != GLOB_NOMATCH)
@@ -1236,7 +1323,8 @@ glob_body_inner (const char *pattern, int flags,
           for (char *p = &dirname[dirlen - 1];
                p > dirname && p[0] == '/'; --p)
             p[0] = '\0';
-          int val = glob_body_inner (dirname, flags | GLOB_MARK, errfunc, pglob);
+          int val = glob_body_inner (dirname, flags | GLOB_MARK, errfunc, pglob,
+                                     homedir_fn);
           if (val == 0)
             {
               if ((flags & GLOB_KEEP_SLASHES)
@@ -1325,46 +1413,17 @@ glob_body_inner (const char *pattern, int flags,
               else
                 home_dir = "c:/users/default"; /* poor default */
 #else
-              int err;
-              struct passwd *p;
-              struct passwd pwbuf;
-              struct scratch_buffer s;
-              scratch_buffer_init (&s);
-              while (true)
+              home_dir = NULL;
+              if (homedir_fn != NULL)
                 {
-                  p = NULL;
-                  err = __getlogin_r (s.data, s.length);
-                  if (err == 0)
+                  int lookup_res = homedir_fn (NULL, &home_dir);
+                  if (__glibc_unlikely (lookup_res != 0))
                     {
-# if defined HAVE_GETPWNAM_R || defined _LIBC
-                      size_t ssize = strlen (s.data) + 1;
-                      char *sdata = s.data;
-                      err = getpwnam_r (sdata, &pwbuf, sdata + ssize,
-                                        s.length - ssize, &p);
-# else
-                      p = getpwnam (s.data);
-                      if (p == NULL)
-                        err = errno;
-# endif
-                    }
-                  if (err != ERANGE)
-                    break;
-                  if (!scratch_buffer_grow (&s))
-                    {
-                      retval = GLOB_NOSPACE;
+                      retval = lookup_res;
                       goto out;
                     }
-                }
-              if (err == 0)
-                {
-                  home_dir = strdup (p->pw_dir);
-                  malloc_home_dir = 1;
-                }
-              scratch_buffer_free (&s);
-              if (err == 0 && home_dir == NULL)
-                {
-                  retval = GLOB_NOSPACE;
-                  goto out;
+                  if (home_dir != NULL)
+                    malloc_home_dir = 1;
                 }
 #endif /* WINDOWS32 */
             }
@@ -1519,34 +1578,23 @@ glob_body_inner (const char *pattern, int flags,
 
           /* Look up specific user's home directory.  */
           {
-            struct passwd *p;
-            struct scratch_buffer pwtmpbuf;
-            scratch_buffer_init (&pwtmpbuf);
-
-#  if defined HAVE_GETPWNAM_R || defined _LIBC
-            struct passwd pwbuf;
-
-            while (getpwnam_r (user_name, &pwbuf,
-                               pwtmpbuf.data, pwtmpbuf.length, &p)
-                   == ERANGE)
-              {
-                if (!scratch_buffer_grow (&pwtmpbuf))
-                  {
-                    retval = GLOB_NOSPACE;
-                    goto out;
-                  }
-              }
-#  else
-            p = getpwnam (user_name);
-#  endif
+            char *user_home = NULL;
+            int lookup_res = (homedir_fn != NULL
+                              ? homedir_fn (user_name, &user_home) : 0);
 
             if (__glibc_unlikely (malloc_user_name))
               free (user_name);
 
-            /* If we found a home directory use this.  */
-            if (p != NULL)
+            if (__glibc_unlikely (lookup_res != 0))
               {
-                size_t home_len = strlen (p->pw_dir);
+                retval = lookup_res;
+                goto out;
+              }
+
+            /* If we found a home directory use this.  */
+            if (user_home != NULL)
+              {
+                size_t home_len = strlen (user_home);
                 size_t rest_len = end_name == NULL ? 0 : strlen (end_name);
                 /* dirname contains end_name; we can't free it now.  */
                 char *prev_dirname =
@@ -1564,34 +1612,30 @@ glob_body_inner (const char *pattern, int flags,
                     if (dirname == NULL)
                       {
                         free (prev_dirname);
-                        scratch_buffer_free (&pwtmpbuf);
+                        free (user_home);
                         retval = GLOB_NOSPACE;
                         goto out;
                       }
                     malloc_dirname = 1;
                   }
-                d = mempcpy (dirname, p->pw_dir, home_len);
+                d = mempcpy (dirname, user_home, home_len);
                 if (end_name != NULL)
                   d = mempcpy (d, end_name, rest_len);
                 *d = '\0';
 
                 free (prev_dirname);
+                free (user_home);
 
                 dirlen = home_len + rest_len;
                 dirname_modified = 1;
               }
-            else
+            else if (flags & GLOB_TILDE_CHECK)
               {
-                if (flags & GLOB_TILDE_CHECK)
-                  {
-                    /* We have to regard it as an error if we cannot find the
-                       home directory.  */
-                    scratch_buffer_free (&pwtmpbuf);
-                    retval = GLOB_NOMATCH;
-                    goto out;
-                  }
+                /* We have to regard it as an error if we cannot find the
+                   home directory.  */
+                retval = GLOB_NOMATCH;
+                goto out;
               }
-            scratch_buffer_free (&pwtmpbuf);
           }
 #else /* WINDOWS32 */
           /* On native Windows, access to a user's home directory
@@ -1859,7 +1903,7 @@ glob_body_inner (const char *pattern, int flags,
                                                | glob_interm_period_flag (flags)))
                                      | GLOB_KEEP_SLASHES | GLOB_NOSORT
                                      | GLOB_ONLYDIR),
-                                    errfunc, &base_dirs);
+                                    errfunc, &base_dirs, homedir_fn);
           if (status == 0)
             {
               int gs_scan_flags
@@ -1970,7 +2014,7 @@ glob_body_inner (const char *pattern, int flags,
                                                | GLOB_TILDE_CHECK
                                                | glob_interm_period_flag (flags)))
                                      | GLOB_NOSORT | GLOB_ONLYDIR),
-                                    errfunc, &dirs);
+                                    errfunc, &dirs, homedir_fn);
         }
       if (status != 0)
         {
@@ -2293,25 +2337,69 @@ glob_body_inner (const char *pattern, int flags,
 }
 
 /* Run one glob call with its own FSWC context (see glob_fstatat).  */
-int
-GLOB_ATTRIBUTE
-__glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
-        glob_t *pglob)
+static int
+glob_with_fswc (const char *pattern, int flags,
+                int (*errfunc) (const char *, int),
+                glob_t *pglob, __glob_homedir_fn_t homedir_fn)
 {
 #if GLOB_FSWC
   struct fswc_call call = { 0 };
   struct fswc_call *outer = glob_fswc_call;
   glob_fswc_call = &call;
 #endif
-  int r = glob_body_inner (pattern, flags, errfunc, pglob);
+  int r = glob_body_inner (pattern, flags, errfunc, pglob, homedir_fn);
 #if GLOB_FSWC
   glob_fswc_call = outer;
 #endif
   return r;
 }
-#if defined _LIBC && !defined __glob
+
+#ifdef GLOB_COMPILE_NOTILDE
+int
+GLOB_ATTRIBUTE
+__glob_internal (const char *pattern, int flags,
+                 int (*errfunc) (const char *, int),
+                 glob_t *pglob, __glob_homedir_fn_t homedir_fn)
+{
+  return glob_with_fswc (pattern, flags, errfunc, pglob, homedir_fn);
+}
+#else
+static int
+GLOB_ATTRIBUTE
+glob_body (const char *pattern, int flags,
+           int (*errfunc) (const char *, int),
+           glob_t *pglob, __glob_homedir_fn_t homedir_fn)
+{
+  return glob_with_fswc (pattern, flags, errfunc, pglob, homedir_fn);
+}
+#endif
+
+#ifdef GLOB_COMPILE_NOTILDE
+int
+__glob_notilde (const char *pattern, int flags,
+                int (*errfunc) (const char *, int), glob_t *pglob)
+{
+  return __glob_internal (pattern, flags & ~(GLOB_TILDE | GLOB_TILDE_CHECK),
+                          errfunc, pglob, NULL);
+}
+#else
+# ifdef WINDOWS32
+#  define GLOB_DEFAULT_HOMEDIR_FN NULL
+# else
+#  define GLOB_DEFAULT_HOMEDIR_FN glob_lookup_homedir
+# endif
+int
+GLOB_ATTRIBUTE
+__glob (const char *pattern, int flags, int (*errfunc) (const char *, int),
+        glob_t *pglob)
+{
+  return glob_body (pattern, flags, errfunc, pglob, GLOB_DEFAULT_HOMEDIR_FN);
+}
+# undef GLOB_DEFAULT_HOMEDIR_FN
+# if defined _LIBC && !defined __glob
 versioned_symbol (libc, __glob, glob, GLIBC_2_27);
 libc_hidden_ver (__glob, glob)
+# endif
 #endif
 
 
@@ -2720,3 +2808,4 @@ glob_in_dir (const char *pattern, const char *directory, int flags,
   scratch_buffer_free (&s);
   return result;
 }
+#endif /* !GLOB_COMPILE_TILDE_WRAPPER */

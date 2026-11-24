@@ -28,6 +28,7 @@ struct pwent_data {};
    to parse lines from the database file.  */
 #define EXTERN_PARSER
 #include "files-parse.c"
+#define DEDUP_KEY(r)	((r)->pw_name)
 #include GENERIC
 
 DB_LOOKUP (pwnam, '.', 0, ("%s", name),

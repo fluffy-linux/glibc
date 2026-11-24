@@ -28,6 +28,7 @@ struct spent_data {};
    to parse lines from the database file.  */
 #define EXTERN_PARSER
 #include "files-parse.c"
+#define DEDUP_KEY(r)	((r)->sp_namp)
 #include GENERIC
 
 DB_LOOKUP (spnam, '.', 0, ("%s", name),

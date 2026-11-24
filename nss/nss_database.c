@@ -24,6 +24,8 @@
 #include <atomic.h>
 #include <ctype.h>
 #include <file_change_detection.h>
+#include <glob.h>
+#include <paths.h>
 #include <libc-lock.h>
 #include <netdb.h>
 #include <stdio_ext.h>
@@ -293,9 +295,60 @@ nss_database_reload_1 (struct nss_database_data *data, FILE *fp)
 }
 
 static bool
+nss_database_load_vendor (struct nss_database_data *staging)
+{
+  glob64_t gl;
+  int gr = __glob64_notilde (_PATH_VENDOR_NSSWITCH_CONF, GLOB_PATHS, NULL, &gl);
+  if (gr == GLOB_NOSPACE)
+    {
+      __set_errno (ENOMEM);
+      return false;
+    }
+  if (gr != 0)
+    return true;
+
+  bool ok = true;
+  for (size_t i = 0; i < gl.gl_pathc; ++i)
+    {
+      FILE *vfp = fopen (gl.gl_pathv[i], "rce");
+      if (vfp == NULL)
+        {
+          switch (errno)
+            {
+            case EACCES:
+            case EISDIR:
+            case ELOOP:
+            case ENOENT:
+            case ENOTDIR:
+            case EPERM:
+              continue;
+            default:
+              ok = false;
+              break;
+            }
+          if (!ok)
+            break;
+        }
+      __fsetlocking (vfp, FSETLOCKING_BYCALLER);
+      ok = nss_database_reload_1 (staging, vfp);
+      fclose (vfp);
+      if (!ok)
+        break;
+    }
+
+  __globfree64 (&gl);
+  return ok;
+}
+
+static bool
 nss_database_reload (struct nss_database_data *staging,
                      struct file_change_detection *initial)
 {
+  int orig_errno = errno;
+  if (!nss_database_load_vendor (staging))
+    return false;
+  __set_errno (orig_errno);
+
   FILE *fp = fopen (_PATH_NSSWITCH_CONF, "rce");
   if (fp == NULL)
     switch (errno)
@@ -376,6 +429,8 @@ nss_database_reload (struct nss_database_data *staging,
     /* Reload is required because the file changed while reading.  */
     staging->nsswitch_conf.size = -1;
 
+  if (ok)
+    __set_errno (orig_errno);
   return ok;
 }
 

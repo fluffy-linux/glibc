@@ -25,12 +25,14 @@
 # include <glob.h>
 
 # define glob_t glob64_t
-# define globfree(pglob) globfree64 (pglob)
+# define globfree(pglob) __globfree64 (pglob)
 
 # undef stat
 # define stat stat64
 
 # include <posix/globfree.c>
 
-libc_hidden_def (globfree64)
+libc_hidden_def (__globfree64)
+weak_alias (__globfree64, globfree64)
+libc_hidden_ver (__globfree64, globfree64)
 #endif

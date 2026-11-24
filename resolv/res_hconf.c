@@ -39,6 +39,8 @@
 #include <netinet/in.h>
 #include <libc-lock.h>
 #include "ifreq.h"
+#include <glob.h>
+#include <paths.h>
 #include "res_hconf.h"
 #include <wchar.h>
 #include <atomic.h>
@@ -275,9 +277,33 @@ do_init (void)
 
   memset (&_res_hconf, '\0', sizeof (_res_hconf));
 
+  int saved_errno = errno;
   hconf_name = getenv (ENV_HOSTCONF);
   if (hconf_name == NULL)
-    hconf_name = _PATH_HOSTCONF;
+    {
+      glob64_t gl;
+      if (__glob64_notilde (_PATH_VENDOR_HOSTCONF, GLOB_PATHS, NULL, &gl) == 0)
+	{
+	  for (size_t i = 0; i < gl.gl_pathc; ++i)
+	    {
+	      FILE *vfp = fopen (gl.gl_pathv[i], "rce");
+	      if (vfp != NULL)
+		{
+		  int vline = 0;
+		  __fsetlocking (vfp, FSETLOCKING_BYCALLER);
+		  while (fgets_unlocked (buf, sizeof (buf), vfp))
+		    {
+		      ++vline;
+		      *__strchrnul (buf, '\n') = '\0';
+		      parse_line (gl.gl_pathv[i], vline, buf);
+		    }
+		  fclose (vfp);
+		}
+	    }
+	  __globfree64 (&gl);
+	}
+      hconf_name = _PATH_HOSTCONF;
+    }
 
   fp = fopen (hconf_name, "rce");
   if (fp)
@@ -293,6 +319,7 @@ do_init (void)
 	}
       fclose (fp);
     }
+  __set_errno (saved_errno);
 
   envval = getenv (ENV_MULTI);
   if (envval)

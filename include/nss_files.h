@@ -29,6 +29,10 @@
 FILE *__nss_files_fopen (const char *path);
 libc_hidden_proto (__nss_files_fopen)
 
+/* Return the 0-based component file index for OFFSET in a multi-file
+   stream opened by __nss_files_fopen, or -1 for single-file streams.  */
+int __nss_files_file_index (FILE *fp, off64_t offset) attribute_hidden;
+
 /* Read a line from FP, storing it BUF.  Strip leading blanks and skip
    comments.  Sets errno and returns error code on failure.  Special
    failure: ERANGE means the buffer is too small.  The function writes
@@ -53,9 +57,19 @@ libc_hidden_proto (__nss_parse_line_result)
 
 /* Per-file data.  Used by the *ent functions that need to preserve
    state across calls.  */
+struct nss_files_seen_slot
+{
+  char *name;
+  uint32_t hash;
+  int file_idx;
+};
+
 struct nss_files_per_file_data
 {
   FILE *stream;
+  struct nss_files_seen_slot *seen_slots;
+  size_t seen_count;
+  size_t seen_cap;
 #if IS_IN (libc)
   /* The size of locks changes between libc and nss_files, so this
      member must be last and is only available in libc.  */
@@ -107,6 +121,13 @@ libc_hidden_proto (__nss_files_data_setent)
 /* Performs the end*ent operation for FILE.  */
 enum nss_status __nss_files_data_endent (enum nss_files_file file);
 libc_hidden_proto (__nss_files_data_endent)
+
+/* Record NAME at FILE_IDX during multi-file *ent enumeration.
+   Returns 0 if NAME should be yielded, 1 if shadowed by an earlier file,
+   or -1 on allocation failure.  */
+int __nss_files_data_check_seen (struct nss_files_per_file_data *data,
+                                 const char *name, int file_idx)
+  attribute_hidden;
 
 struct parser_data;
 
